@@ -27,7 +27,7 @@ int win_kb_add(struct keyboard_input ki)
 def_create_win(create_win)
 {
     if (SDL_Init(SDL_INIT_TIMER|SDL_INIT_VIDEO|SDL_INIT_EVENTS)) {
-        log_error("failed to init sdl");
+        log_error("Failed to init sdl");
         return -1;
     }
     win.dim.w = 640;
@@ -35,7 +35,8 @@ def_create_win(create_win)
     win.handle = SDL_CreateWindow("Window Title",
                                   SDL_WINDOWPOS_CENTERED,
                                   SDL_WINDOWPOS_CENTERED,
-                                  win.dim.w, win.dim.h, SDL_WINDOW_VULKAN);
+                                  win.dim.w, win.dim.h,
+                                  SDL_WINDOW_VULKAN|SDL_WINDOW_RESIZABLE);
     return win.handle ? 0 : -1;
 }
 
@@ -60,6 +61,11 @@ def_win_poll(win_poll)
     SDL_Event e;
     while(SDL_PollEvent(&e)) {
         switch(e.type) {
+            
+            case SDL_QUIT:
+            win.flags |= WIN_CLOSE;
+            break;
+            
             case SDL_KEYDOWN:
             case SDL_KEYUP: {
                 struct keyboard_input ki;
@@ -76,6 +82,40 @@ def_win_poll(win_poll)
                     return -1;
                 }
             } break;
+            
+            case SDL_WINDOWEVENT: {
+                
+                switch(e.window.event) {
+                    
+                    case SDL_WINDOWEVENT_RESIZED:
+                    println("Resize");
+                    break;
+                    
+                    case SDL_WINDOWEVENT_MINIMIZED:
+                    println("Minimize");
+                    break;
+                    
+                    case SDL_WINDOWEVENT_MAXIMIZED:
+                    println("Maximize");
+                    break;
+                    
+                    case SDL_WINDOWEVENT_RESTORED:
+                    println("Restore");
+                    break;
+                    
+                    case SDL_WINDOWEVENT_ENTER:
+                    break;
+                    case SDL_WINDOWEVENT_LEAVE:
+                    break;
+                    case SDL_WINDOWEVENT_FOCUS_GAINED:
+                    break;
+                    case SDL_WINDOWEVENT_FOCUS_LOST:
+                    break;
+                    
+                    default:
+                    break;
+                }
+            }
             
             default:
             break;
@@ -94,7 +134,6 @@ def_win_kb_next(win_kb_next)
 
 def_win_key_to_char(win_key_to_char)
 {
-    char c = 0;
     switch(ki.key) {
         case KEY_A: if (ki.mod & SHIFT) return 'A'; else return 'a';
         case KEY_B: if (ki.mod & SHIFT) return 'B'; else return 'b';
@@ -145,9 +184,9 @@ def_win_key_to_char(win_key_to_char)
         case KEY_PERIOD: if (ki.mod & SHIFT) return '>'; else return '.';
         case KEY_SLASH: if (ki.mod & SHIFT) return '?'; else return '/';
         
-        case KEY_RETURN: c = '\n'; break;
-        case KEY_TAB: c = '\t'; break;
-        case KEY_SPACE: c = ' '; break;
+        case KEY_RETURN: return '\n';
+        case KEY_TAB: return '\t';
+        case KEY_SPACE: return ' ';
         
         default:
         break;

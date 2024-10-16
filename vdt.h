@@ -9,13 +9,20 @@ struct vdt_elem {
 };
 
 enum {
+    // Instance API
     VDT_EnumeratePhysicalDevices,
     VDT_GetPhysicalDeviceProperties,
     VDT_GetPhysicalDeviceQueueFamilyProperties,
     VDT_GetPhysicalDeviceSurfaceSupportKHR,
     VDT_CreateDevice,
+    VDT_GetPhysicalDeviceSurfaceCapabilitiesKHR,
+    VDT_GetPhysicalDeviceSurfaceFormatsKHR,
+    VDT_GetPhysicalDeviceSurfacePresentModesKHR,
     VDT_INST_END,
     
+    // Device API
+    VDT_GetDeviceQueue,
+    VDT_CreateSwapchainKHR,
     VDT_DEV_END,
     
     // Other meta info
@@ -64,6 +71,22 @@ static inline VkResult vk_get_physical_device_surface_support_khr(u32 qfi, b32 *
 
 static inline VkResult vk_create_device(VkDeviceCreateInfo *ci) {
     return cvk(vdt_call(CreateDevice)(gpu.phys_dev, ci, GAC, &gpu.dev));
+}
+
+static inline void vk_get_physical_device_surface_capabilities_khr(VkSurfaceCapabilitiesKHR *cap) {
+    vdt_call(GetPhysicalDeviceSurfaceCapabilitiesKHR)(gpu.phys_dev, gpu.surf, cap);
+}
+
+static inline void vk_get_physical_device_surface_formats_khr(u32 *cnt, VkSurfaceFormatKHR *fmts) {
+    vdt_call(GetPhysicalDeviceSurfaceFormatsKHR)(gpu.phys_dev, gpu.surf, cnt, fmts);
+}
+
+static inline void vk_get_device_queue(u32 qi, VkQueue *qh) {
+    vdt_call(GetDeviceQueue)(gpu.dev, qi, 0, qh);
+}
+
+static inline VkResult vk_create_swapchain_khr(void) {
+    return cvk(vdt_call(CreateSwapchainKHR)(gpu.dev, &gpu.sc.info, GAC, &gpu.sc.handle));
 }
 
 def_cvk(cvk_fn)

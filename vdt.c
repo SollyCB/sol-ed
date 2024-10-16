@@ -6,6 +6,11 @@ struct vdt_elem vdt[VDT_SIZE] = {
     [VDT_GetPhysicalDeviceQueueFamilyProperties] = {.name = "vkGetPhysicalDeviceQueueFamilyProperties"},
     [VDT_GetPhysicalDeviceSurfaceSupportKHR] = {.name = "vkGetPhysicalDeviceSurfaceSupportKHR"},
     [VDT_CreateDevice] = {.name = "vkCreateDevice"},
+    [VDT_GetPhysicalDeviceSurfaceCapabilitiesKHR] = {.name = "vkGetPhysicalDeviceSurfaceCapabilitiesKHR"},
+    [VDT_GetPhysicalDeviceSurfaceFormatsKHR] = {.name = "vkGetPhysicalDeviceSurfaceFormatsKHR"},
+    [VDT_GetPhysicalDeviceSurfacePresentModesKHR] = {.name = "vkGetPhysicalDeviceSurfacePresentModesKHR"},
+    [VDT_GetDeviceQueue] = {.name = "vkGetDeviceQueue"},
+    [VDT_CreateSwapchainKHR] = {.name = "vkCreateSwapchainKHR"},
 };
 
 def_create_vdt(create_vdt)

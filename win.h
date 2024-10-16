@@ -3,9 +3,9 @@
 
 #include "SDL2/SDL_vulkan.h"
 #include "SDL2/SDL.h"
-#include "keys.h"
 
 #include "../solh/sol.h"
+#include "keys.h"
 
 enum mod_flags {
     PRESS = 0x01,

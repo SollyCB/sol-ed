@@ -3,6 +3,9 @@
 
 #include <vulkan/vulkan.h>
 
+#define MAX_SWAPCHAIN_IMAGES 4
+#define MIN_SWAPCHAIN_IMAGES 2
+
 extern struct gpu {
     VkInstance inst;
     VkSurfaceKHR surf;
@@ -10,11 +13,20 @@ extern struct gpu {
     VkDevice dev;
     VkPhysicalDeviceProperties props;
     
+    struct { u32 g,t,p; } qi; // queue indices
+    struct { VkQueue g,t,p; } qh; // queue handles
+    
     struct {
-        u32 transfer;
-        u32 graphics;
-        u32 present;
-    } queues;
+        VkSwapchainKHR handle;
+        VkSwapchainCreateInfoKHR info;
+        
+        struct {
+            VkImage handle;
+            VkImageView view;
+        } images[MAX_SWAPCHAIN_IMAGES];
+        
+    } sc;
+    
 } gpu;
 
 #define def_create_gpu(name) int name(void)

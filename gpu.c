@@ -26,7 +26,8 @@ def_create_gpu(create_gpu)
         ci.enabledExtensionCount = ext_count;
         ci.ppEnabledExtensionNames = exts;
         
-        vk_create_instance(&ci);
+        if (vk_create_instance(&ci))
+            return -1;
         
         if (win_create_surf())
             return -1;
@@ -139,19 +140,80 @@ def_create_gpu(create_gpu)
         };
         qc += (transfer != graphics);
         
+        char *ext_names[] = {
+            "VK_KHR_swapchain",
+        };
+        
         VkDeviceCreateInfo ci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         ci.queueCreateInfoCount = qc;
         ci.pQueueCreateInfos = qci;
+        ci.enabledExtensionCount = cl_array_size(ext_names);
+        ci.ppEnabledExtensionNames = ext_names;
         
-        vk_create_device(&ci);
-        
-        gpu.queues.graphics = graphics;
-        gpu.queues.present = present;
-        gpu.queues.transfer = transfer;
+        if (vk_create_device(&ci))
+            return -1;
 #undef MAX_QUEUE_COUNT
+        
+        gpu.qi.g = graphics;
+        gpu.qi.p = present;
+        gpu.qi.t = transfer;
     }
     
     create_vdt(); // initialize device api calls
+    
+    {
+        vk_get_device_queue(gpu.qi.g, &gpu.qh.g);
+        
+        if (gpu.qi.p != gpu.qi.g)
+            vk_get_device_queue(gpu.qi.p, &gpu.qh.p);
+        else
+            gpu.qi.p = gpu.qi.g;
+        
+        if (gpu.qi.t != gpu.qi.g)
+            vk_get_device_queue(gpu.qi.t, &gpu.qh.t);
+        else
+            gpu.qi.t = gpu.qi.g;
+    }
+    
+    {
+        VkSurfaceCapabilitiesKHR cap;
+        vk_get_physical_device_surface_capabilities_khr(&cap);
+        
+        if (cap.minImageCount > MAX_SWAPCHAIN_IMAGES) {
+            log_error("MAX_SWAPCHAIN_IMAGES is smaller that minimum required swapchain images");
+            return -1;
+        }
+        if (cap.maxImageCount < MIN_SWAPCHAIN_IMAGES && cap.maxImageCount != 0) {
+            log_error("MIN_SWAPCHAIN_IMAGES is greater than maximum available swapchain images");
+            return -1;
+        }
+        
+        u32 img_cnt = cap.minImageCount < MIN_SWAPCHAIN_IMAGES ? MIN_SWAPCHAIN_IMAGES : cap.minImageCount;
+        
+        u32 fmt_cnt = 1;
+        VkSurfaceFormatKHR fmt;
+        vk_get_physical_device_surface_formats_khr(&fmt_cnt, &fmt);
+        
+        gpu.sc.info = (typeof(gpu.sc.info)) {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+        gpu.sc.info.surface = gpu.surf;
+        gpu.sc.info.preTransform = cap.currentTransform;
+        gpu.sc.info.imageExtent = cap.currentExtent;
+        gpu.sc.info.imageFormat = fmt.format;
+        gpu.sc.info.imageColorSpace = fmt.colorSpace;
+        gpu.sc.info.minImageCount = img_cnt;
+        gpu.sc.info.imageArrayLayers = 1;
+        gpu.sc.info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        gpu.sc.info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        gpu.sc.info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        gpu.sc.info.clipped = VK_TRUE;
+        gpu.sc.info.queueFamilyIndexCount = 1;
+        gpu.sc.info.pQueueFamilyIndices = &gpu.qi.p;
+        gpu.sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        
+        if (vk_create_swapchain_khr())
+            return -1;
+        gpu.sc.info.oldSwapchain = gpu.sc.handle;
+    }
     
     return 0;
 }
