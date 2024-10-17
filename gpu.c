@@ -3,7 +3,48 @@
 #include "vdt.h"
 #include "gpu.h"
 
-struct gpu gpu;
+struct gpu *gpu;
+
+internal int create_swapchain(void)
+{
+    gpu->sc.info.imageExtent = (VkExtent2D) {.width = win->dim.w, .height = win->dim.h};
+    
+    if (vk_create_swapchain_khr())
+        return -1;
+    gpu->sc.info.oldSwapchain = gpu->sc.handle;
+    
+    if (gpu->sc.views[0]) {
+        for(u32 i=0; i < gpu->sc.img_cnt; ++i)
+            vk_destroy_image_view(gpu->sc.views[i]);
+        memset(gpu->sc.views, 0, sizeof(gpu->sc.views));
+    }
+    if (vk_get_swapchain_images_khr(&gpu->sc.img_cnt, gpu->sc.images))
+        return -1;
+    
+    u32 i;
+    for(i=0; i < gpu->sc.img_cnt; ++i) {
+        VkImageViewCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        ci.image = gpu->sc.images[i];
+        ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        ci.format = gpu->sc.info.imageFormat;
+        ci.subresourceRange = (VkImageSubresourceRange) {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        };
+        if (vk_create_image_view(&ci, &gpu->sc.views[i]))
+            goto view_fail;
+    }
+    
+    return 0;
+    
+    view_fail:
+    while(--i < Max_u32)
+        vk_destroy_image_view(gpu->sc.views[i]);
+    return -1;
+}
 
 def_create_gpu(create_gpu)
 {
@@ -58,11 +99,11 @@ def_create_gpu(create_gpu)
         }
         
         if (discrete != Max_u32) {
-            gpu.phys_dev = pd[discrete];
-            gpu.props = props[discrete];
+            gpu->phys_dev = pd[discrete];
+            gpu->props = props[discrete];
         } else if (integrated != Max_u32) {
-            gpu.phys_dev = pd[integrated];
-            gpu.props = props[integrated];
+            gpu->phys_dev = pd[integrated];
+            gpu->props = props[integrated];
         } else {
             log_error("Failed to find device with appropriate type");
             return -1;
@@ -103,10 +144,10 @@ def_create_gpu(create_gpu)
         if (graphics == Max_u32 || present == Max_u32) {
             log_error_if(graphics == Max_u32,
                          "physical device %s does not support graphics operations",
-                         gpu.props.deviceName);
+                         gpu->props.deviceName);
             log_error_if(present == Max_u32,
                          "physical device %s does not support present operations",
-                         gpu.props.deviceName);
+                         gpu->props.deviceName);
             return -1;
         }
         
@@ -154,30 +195,33 @@ def_create_gpu(create_gpu)
             return -1;
 #undef MAX_QUEUE_COUNT
         
-        gpu.qi.g = graphics;
-        gpu.qi.p = present;
-        gpu.qi.t = transfer;
+        gpu->qi.g = graphics;
+        gpu->qi.p = present;
+        gpu->qi.t = transfer;
     }
     
     create_vdt(); // initialize device api calls
     
     {
-        vk_get_device_queue(gpu.qi.g, &gpu.qh.g);
+        vk_get_device_queue(gpu->qi.g, &gpu->qh.g);
         
-        if (gpu.qi.p != gpu.qi.g)
-            vk_get_device_queue(gpu.qi.p, &gpu.qh.p);
+        if (gpu->qi.p != gpu->qi.g)
+            vk_get_device_queue(gpu->qi.p, &gpu->qh.p);
         else
-            gpu.qi.p = gpu.qi.g;
+            gpu->qi.p = gpu->qi.g;
         
-        if (gpu.qi.t != gpu.qi.g)
-            vk_get_device_queue(gpu.qi.t, &gpu.qh.t);
+        if (gpu->qi.t != gpu->qi.g)
+            vk_get_device_queue(gpu->qi.t, &gpu->qh.t);
         else
-            gpu.qi.t = gpu.qi.g;
+            gpu->qi.t = gpu->qi.g;
     }
     
     {
         VkSurfaceCapabilitiesKHR cap;
         vk_get_physical_device_surface_capabilities_khr(&cap);
+        
+        log_error_if(cap.currentExtent.width != win->dim.w || cap.currentExtent.height != win->dim.h,
+                     "Window dimensions do not match those reported by surface capabilities");
         
         if (cap.minImageCount > MAX_SWAPCHAIN_IMAGES) {
             log_error("MAX_SWAPCHAIN_IMAGES is smaller that minimum required swapchain images");
@@ -188,31 +232,30 @@ def_create_gpu(create_gpu)
             return -1;
         }
         
-        u32 img_cnt = cap.minImageCount < MIN_SWAPCHAIN_IMAGES ? MIN_SWAPCHAIN_IMAGES : cap.minImageCount;
+        gpu->sc.img_cnt = cap.minImageCount < MIN_SWAPCHAIN_IMAGES ? MIN_SWAPCHAIN_IMAGES : cap.minImageCount;
         
         u32 fmt_cnt = 1;
         VkSurfaceFormatKHR fmt;
         vk_get_physical_device_surface_formats_khr(&fmt_cnt, &fmt);
         
-        gpu.sc.info = (typeof(gpu.sc.info)) {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
-        gpu.sc.info.surface = gpu.surf;
-        gpu.sc.info.preTransform = cap.currentTransform;
-        gpu.sc.info.imageExtent = cap.currentExtent;
-        gpu.sc.info.imageFormat = fmt.format;
-        gpu.sc.info.imageColorSpace = fmt.colorSpace;
-        gpu.sc.info.minImageCount = img_cnt;
-        gpu.sc.info.imageArrayLayers = 1;
-        gpu.sc.info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        gpu.sc.info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        gpu.sc.info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        gpu.sc.info.clipped = VK_TRUE;
-        gpu.sc.info.queueFamilyIndexCount = 1;
-        gpu.sc.info.pQueueFamilyIndices = &gpu.qi.p;
-        gpu.sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        gpu->sc.info = (typeof(gpu->sc.info)) {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
+        gpu->sc.info.surface = gpu->surf;
+        gpu->sc.info.preTransform = cap.currentTransform;
+        gpu->sc.info.imageExtent = cap.currentExtent;
+        gpu->sc.info.imageFormat = fmt.format;
+        gpu->sc.info.imageColorSpace = fmt.colorSpace;
+        gpu->sc.info.minImageCount = gpu->sc.img_cnt;
+        gpu->sc.info.imageArrayLayers = 1;
+        gpu->sc.info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        gpu->sc.info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        gpu->sc.info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        gpu->sc.info.clipped = VK_TRUE;
+        gpu->sc.info.queueFamilyIndexCount = 1;
+        gpu->sc.info.pQueueFamilyIndices = &gpu->qi.p;
+        gpu->sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         
-        if (vk_create_swapchain_khr())
+        if (create_swapchain())
             return -1;
-        gpu.sc.info.oldSwapchain = gpu.sc.handle;
     }
     
     return 0;

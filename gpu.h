@@ -6,7 +6,7 @@
 #define MAX_SWAPCHAIN_IMAGES 4
 #define MIN_SWAPCHAIN_IMAGES 2
 
-extern struct gpu {
+struct gpu {
     VkInstance inst;
     VkSurfaceKHR surf;
     VkPhysicalDevice phys_dev;
@@ -20,14 +20,15 @@ extern struct gpu {
         VkSwapchainKHR handle;
         VkSwapchainCreateInfoKHR info;
         
-        struct {
-            VkImage handle;
-            VkImageView view;
-        } images[MAX_SWAPCHAIN_IMAGES];
-        
+        u32 img_cnt;
+        VkImage images[MAX_SWAPCHAIN_IMAGES];
+        VkImageView views[MAX_SWAPCHAIN_IMAGES];
     } sc;
-    
-} gpu;
+};
+
+#ifdef LIB
+extern struct gpu *gpu;
+#endif
 
 #define def_create_gpu(name) int name(void)
 def_create_gpu(create_gpu);

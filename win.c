@@ -1,54 +1,51 @@
 #include "win.h"
 #include "gpu.h"
 
-struct win win;
-typedef typeof(win.kb.read) keycode_t;
+struct win *win;
+
+typedef typeof(win->kb.read) keycode_t;
 
 keycode_t win_scancode_to_key(SDL_Scancode sc)
 {
     return (keycode_t) sc;
 }
 
-static inline keycode_t win_kb_inc(keycode_t pos)
+internal inline keycode_t win_kb_inc(keycode_t pos)
 {
-    return (keycode_t) inc_and_wrap(pos, cl_array_size(win.kb.buf));
+    return (keycode_t) inc_and_wrap(pos, cl_array_size(win->kb.buf));
 }
 
-int win_kb_add(struct keyboard_input ki)
+internal int win_kb_add(struct keyboard_input ki)
 {
-    keycode_t w = win_kb_inc(win.kb.write);
-    if (w == win.kb.read) return -1;
+    keycode_t w = win_kb_inc(win->kb.write);
+    if (w == win->kb.read) return -1;
     
-    win.kb.buf[w] = ki;
-    win.kb.write = w;
+    win->kb.buf[w] = ki;
+    win->kb.write = w;
     return 0;
 }
 
 def_create_win(create_win)
 {
-    if (SDL_Init(SDL_INIT_TIMER|SDL_INIT_VIDEO|SDL_INIT_EVENTS)) {
-        log_error("Failed to init sdl");
-        return -1;
-    }
-    win.dim.w = 640;
-    win.dim.h = 480;
-    win.handle = SDL_CreateWindow("Window Title",
-                                  SDL_WINDOWPOS_CENTERED,
-                                  SDL_WINDOWPOS_CENTERED,
-                                  win.dim.w, win.dim.h,
-                                  SDL_WINDOW_VULKAN|SDL_WINDOW_RESIZABLE);
-    return win.handle ? 0 : -1;
+    win->dim.w = 640;
+    win->dim.h = 480;
+    win->handle = SDL_CreateWindow("Window Title",
+                                   SDL_WINDOWPOS_CENTERED,
+                                   SDL_WINDOWPOS_CENTERED,
+                                   win->dim.w, win->dim.h,
+                                   SDL_WINDOW_VULKAN|SDL_WINDOW_RESIZABLE);
+    return win->handle ? 0 : -1;
 }
 
 def_win_inst_exts(win_inst_exts)
 {
-    SDL_Vulkan_GetInstanceExtensions(win.handle, count, exts);
+    SDL_Vulkan_GetInstanceExtensions(win->handle, count, exts);
 }
 
 def_win_create_surf(win_create_surf)
 {
-    bool ok = SDL_Vulkan_CreateSurface(win.handle, (SDL_vulkanInstance)gpu.inst,
-                                       (SDL_vulkanSurface*)&gpu.surf);
+    bool ok = SDL_Vulkan_CreateSurface(win->handle, (SDL_vulkanInstance)gpu->inst,
+                                       (SDL_vulkanSurface*)&gpu->surf);
     if (!ok) {
         log_error("Failed to create draw surface - %s", SDL_GetError());
         return -1;
@@ -63,7 +60,7 @@ def_win_poll(win_poll)
         switch(e.type) {
             
             case SDL_QUIT:
-            win.flags |= WIN_CLOSE;
+            win->flags |= WIN_CLO;
             break;
             
             case SDL_KEYDOWN:
@@ -84,23 +81,21 @@ def_win_poll(win_poll)
             } break;
             
             case SDL_WINDOWEVENT: {
-                
                 switch(e.window.event) {
-                    
                     case SDL_WINDOWEVENT_RESIZED:
-                    println("Resize");
+                    win->flags |= WIN_RSZ;
                     break;
                     
                     case SDL_WINDOWEVENT_MINIMIZED:
-                    println("Minimize");
+                    win->flags |= WIN_MIN;
                     break;
                     
                     case SDL_WINDOWEVENT_MAXIMIZED:
-                    println("Maximize");
+                    win->flags |= WIN_MAX;
                     break;
                     
                     case SDL_WINDOWEVENT_RESTORED:
-                    println("Restore");
+                    win->flags &= ~WIN_SZ; // clear min|max|resize flags
                     break;
                     
                     case SDL_WINDOWEVENT_ENTER:
@@ -115,7 +110,7 @@ def_win_poll(win_poll)
                     default:
                     break;
                 }
-            }
+            } break;
             
             default:
             break;
@@ -126,9 +121,9 @@ def_win_poll(win_poll)
 
 def_win_kb_next(win_kb_next)
 {
-    if (win.kb.read == win.kb.write) return false;
-    win.kb.read = win_kb_inc(win.kb.read);
-    *ki = win.kb.buf[win.kb.read];
+    if (win->kb.read == win->kb.write) return false;
+    win->kb.read = win_kb_inc(win->kb.read);
+    *ki = win->kb.buf[win->kb.read];
     return true;
 }
 

@@ -3,11 +3,6 @@
 
 #include "gpu.h"
 
-struct vdt_elem {
-    char *name;
-    PFN_vkVoidFunction fn;
-};
-
 enum {
     // Instance API
     VDT_EnumeratePhysicalDevices,
@@ -23,6 +18,9 @@ enum {
     // Device API
     VDT_GetDeviceQueue,
     VDT_CreateSwapchainKHR,
+    VDT_GetSwapchainImagesKHR,
+    VDT_CreateImageView,
+    VDT_DestroyImageView,
     VDT_DEV_END,
     
     // Other meta info
@@ -30,7 +28,20 @@ enum {
     VDT_DEV_START = VDT_INST_END + 1,
     VDT_SIZE = VDT_DEV_END,
 };
-extern struct vdt_elem vdt[VDT_SIZE];
+
+struct vdt_elem {
+    char *name;
+    PFN_vkVoidFunction fn;
+};
+
+struct vdt {
+    struct vdt_elem *table;
+};
+
+#ifdef EXE
+extern struct vdt_elem exevdt[VDT_SIZE];
+#else
+extern struct vdt *vdt;
 
 #define def_create_vdt(name) int name(void)
 def_create_vdt(create_vdt);
@@ -47,14 +58,14 @@ def_cvk(cvk_fn);
 #define cvk(res)
 #endif
 
-#define vdt_call(name) ((PFN_vk ## name)(vdt[VDT_ ## name].fn))
+#define vdt_call(name) ((PFN_vk ## name)(vdt->table[VDT_ ## name].fn))
 
 static inline VkResult vk_create_instance(VkInstanceCreateInfo *info) {
-    return cvk(vkCreateInstance(info, GAC, &gpu.inst));
+    return cvk(vkCreateInstance(info, GAC, &gpu->inst));
 }
 
 static inline VkResult vk_enumerate_physical_devices(u32 *cnt, VkPhysicalDevice *devs) {
-    return cvk(vdt_call(EnumeratePhysicalDevices)(gpu.inst, cnt, devs));
+    return cvk(vdt_call(EnumeratePhysicalDevices)(gpu->inst, cnt, devs));
 }
 
 static inline void vk_get_physical_device_properties(VkPhysicalDevice dev, VkPhysicalDeviceProperties *props) {
@@ -62,31 +73,43 @@ static inline void vk_get_physical_device_properties(VkPhysicalDevice dev, VkPhy
 }
 
 static inline void vk_get_physical_device_queue_family_properties(u32 *cnt, VkQueueFamilyProperties *props) {
-    vdt_call(GetPhysicalDeviceQueueFamilyProperties)(gpu.phys_dev, cnt, props);
+    vdt_call(GetPhysicalDeviceQueueFamilyProperties)(gpu->phys_dev, cnt, props);
 }
 
 static inline VkResult vk_get_physical_device_surface_support_khr(u32 qfi, b32 *support) {
-    return cvk(vdt_call(GetPhysicalDeviceSurfaceSupportKHR)(gpu.phys_dev, qfi, gpu.surf, support));
+    return cvk(vdt_call(GetPhysicalDeviceSurfaceSupportKHR)(gpu->phys_dev, qfi, gpu->surf, support));
 }
 
 static inline VkResult vk_create_device(VkDeviceCreateInfo *ci) {
-    return cvk(vdt_call(CreateDevice)(gpu.phys_dev, ci, GAC, &gpu.dev));
+    return cvk(vdt_call(CreateDevice)(gpu->phys_dev, ci, GAC, &gpu->dev));
 }
 
 static inline void vk_get_physical_device_surface_capabilities_khr(VkSurfaceCapabilitiesKHR *cap) {
-    vdt_call(GetPhysicalDeviceSurfaceCapabilitiesKHR)(gpu.phys_dev, gpu.surf, cap);
+    vdt_call(GetPhysicalDeviceSurfaceCapabilitiesKHR)(gpu->phys_dev, gpu->surf, cap);
 }
 
 static inline void vk_get_physical_device_surface_formats_khr(u32 *cnt, VkSurfaceFormatKHR *fmts) {
-    vdt_call(GetPhysicalDeviceSurfaceFormatsKHR)(gpu.phys_dev, gpu.surf, cnt, fmts);
+    vdt_call(GetPhysicalDeviceSurfaceFormatsKHR)(gpu->phys_dev, gpu->surf, cnt, fmts);
 }
 
 static inline void vk_get_device_queue(u32 qi, VkQueue *qh) {
-    vdt_call(GetDeviceQueue)(gpu.dev, qi, 0, qh);
+    vdt_call(GetDeviceQueue)(gpu->dev, qi, 0, qh);
 }
 
 static inline VkResult vk_create_swapchain_khr(void) {
-    return cvk(vdt_call(CreateSwapchainKHR)(gpu.dev, &gpu.sc.info, GAC, &gpu.sc.handle));
+    return cvk(vdt_call(CreateSwapchainKHR)(gpu->dev, &gpu->sc.info, GAC, &gpu->sc.handle));
+}
+
+static inline VkResult vk_get_swapchain_images_khr(u32 *cnt, VkImage *imgs) {
+    return cvk(vdt_call(GetSwapchainImagesKHR)(gpu->dev, gpu->sc.handle, cnt, imgs));
+}
+
+static inline VkResult vk_create_image_view(VkImageViewCreateInfo *ci, VkImageView *view) {
+    return cvk(vdt_call(CreateImageView)(gpu->dev, ci, GAC, view));
+}
+
+static inline void vk_destroy_image_view(VkImageView view) {
+    vdt_call(DestroyImageView)(gpu->dev, view, GAC);
 }
 
 def_cvk(cvk_fn)
@@ -122,5 +145,6 @@ def_cvk(cvk_fn)
     log_error("[%s, %u, %s] %s (%i)", file, line, fn, err, (s64)res);
     return res;
 }
+#endif // LIB
 
 #endif // VDT_H

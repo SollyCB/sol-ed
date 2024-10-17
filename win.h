@@ -16,7 +16,12 @@ enum mod_flags {
 };
 
 enum win_flags {
-    WIN_CLOSE = 0x01,
+    WIN_CLO = 0x01,
+    WIN_MIN = 0x02,
+    WIN_MAX = 0x04,
+    WIN_RSZ = 0x08,
+    
+    WIN_SZ = WIN_MIN|WIN_MAX|WIN_RSZ,
 };
 
 struct keyboard_input {
@@ -26,9 +31,9 @@ struct keyboard_input {
 
 #define KEY_BUFFER_SIZE 64
 
-extern struct win {
+struct win {
     SDL_Window *handle;
-    struct rect_s32 dim;
+    struct rect_u32 dim;
     
     struct {
         u16 write,read; // buffer cursors
@@ -36,7 +41,21 @@ extern struct win {
     } kb; // keyboard input ring buffer
     
     u32 flags; // enum win_flags
-} win;
+};
+
+#ifdef LIB
+extern struct win *win;
+
+static inline bool win_should_close(void)
+{
+    _mm_sfence();
+    return win->flags & WIN_CLO;
+}
+
+static inline u32 win_ms(void)
+{
+    return SDL_GetTicks();
+}
 
 #define def_create_win(name) void name(void)
 def_create_win(create_win);
@@ -55,5 +74,6 @@ def_win_kb_next(win_kb_next);
 
 #define def_win_key_to_char(name) char name(struct keyboard_input ki)
 def_win_key_to_char(win_key_to_char);
+#endif // LIB
 
 #endif // include guard

@@ -2,8 +2,8 @@
 #include "../solh/sol.h"
 #undef SOL_DEF
 
-#include "win.c"
-#include "gpu.c"
+#include "defs.h"
+
+#define EXE
 #include "vdt.c"
-#include "prg.c"
 #include "main.c"

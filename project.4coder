@@ -26,12 +26,12 @@ commands = {
    .win = "build.bat",
    .linux = "./build.sh",
    .mac = "./build.sh", },
- .run = { .out = "*run*", .footer_panel = false, .save_dirty_files = false,
-   .win = "build\\run",
-   .linux = "build/run",
-   .mac = "build/run", },
+ .build_exe = { .out = "*run*", .footer_panel = false, .save_dirty_files = false,
+   .win = "build.bat exe",
+   .linux = "./build.sh exe",
+   .mac = "./build.sh exe", },
 };
 fkey_command = {
 .F1 = "build",
-.F2 = "run",
+.F2 = "build_exe",
 };
