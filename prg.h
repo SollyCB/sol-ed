@@ -9,7 +9,7 @@
 
 #define TOTAL_MEM mb(32)
 #define MAX_THREADS 1
-#define MAIN_THREAD 0
+#define MT 0
 
 #define MAIN_THREAD_SCRATCH_SIZE (TOTAL_MEM >> 2)
 #define THREAD_DEFAULT_SCRATCH_SIZE ((TOTAL_MEM - MAIN_THREAD_SCRATCH_SIZE) / MAX_THREADS)
@@ -33,7 +33,7 @@ typedef def_should_prg_shutdown(should_prg_shutdown_t);
 #define def_should_prg_reload(name) bool name(void)
 typedef def_should_prg_reload(should_prg_reload_t);
 
-#define def_prg_update(name) void name(void)
+#define def_prg_update(name) int name(void)
 typedef def_prg_update(prg_update_t);
 
 struct program {
@@ -55,10 +55,25 @@ struct program {
     
     u32 flags;
     u32 thread_count;
+    
+    struct {
+        u32 ms; // time elapsed
+        u32 dms;
+    } time;
+    
+    struct {
+        u32 cnt;
+        u32 avg; // 1ms
+        u32 worst; // 7-10ms
+    } frames;
 };
 
 #ifdef LIB
 extern struct program *prg;
+
+#define salloc(ti, sz) allocate(&prg->allocs[ti].scratch, sz)
+#define palloc(ti, sz) allocate(&prg->allocs[ti].persist, sz)
+
 #endif
 
 #endif // PRG_H

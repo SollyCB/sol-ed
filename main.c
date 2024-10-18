@@ -44,7 +44,9 @@ int main() {
     while(!exeprg.fn.should_shutdown()) {
         if (exeprg.fn.should_reload())
             if (load_lib()) return -1;
-        exeprg.fn.update();
+        
+        if (exeprg.fn.update())
+            return -1;
     }
     
     return 0;

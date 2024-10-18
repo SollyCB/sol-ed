@@ -24,13 +24,25 @@ struct gpu {
         VkImage images[MAX_SWAPCHAIN_IMAGES];
         VkImageView views[MAX_SWAPCHAIN_IMAGES];
     } sc;
+    
+    struct {
+        VkShaderModule vert;
+        VkShaderModule frag;
+    } sh;
+    
+    VkPipelineLayout pll;
+    VkPipeline pl;
 };
 
 #ifdef LIB
 extern struct gpu *gpu;
-#endif
 
 #define def_create_gpu(name) int name(void)
 def_create_gpu(create_gpu);
+
+#define def_gpu_compile_shaders(name) int name(void)
+def_gpu_compile_shaders(gpu_compile_shaders);
+
+#endif // ifdef LIB
 
 #endif

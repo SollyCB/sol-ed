@@ -24,7 +24,7 @@ internal struct thread_config {
     u64 scratch_size;
     u64 persist_size;
 } thread_configs[] = {
-    [MAIN_THREAD] = {
+    [MT] = {
         .scratch_size = MAIN_THREAD_SCRATCH_SIZE,
         .persist_size = MAIN_THREAD_BLOCK_SIZE,
     },
@@ -76,9 +76,33 @@ def_should_prg_reload(should_prg_reload)
 
 def_prg_update(prg_update)
 {
+    prg->frames.cnt++;
+    
+    prg->time.dms = SDL_GetTicks() - prg->time.ms;
+    prg->time.ms += prg->time.dms;
+    
+    if (prg->frames.cnt > 5 && prg->time.dms > prg->frames.worst)
+        prg->frames.worst = prg->time.dms;
+    
+    prg->frames.avg = prg->time.ms / prg->frames.cnt;
+    println("frame avg dt %u", prg->frames.avg);
+    
+    // This comparison seems to be wrong but functions correctly;
+    // see equivalent check in should_prg_reload().
+    if (cmp_ftim(FTIM_MOD, SH_SRC_URI, SH_VERT_SRC_URI) > 0 ||
+        cmp_ftim(FTIM_MOD, SH_SRC_URI, SH_FRAG_SRC_URI) > 0)
+    {
+        println("Recompiling shaders");
+        if (gpu_compile_shaders()) {
+            log_error("Failed to compile shader code");
+            if (!gpu->sh.vert || !gpu->sh.frag)
+                return -1;
+        }
+    }
+    
     win_poll();
     struct keyboard_input ki;
-    while(win_kb_next(&ki)) {
+    while(win_kb_next(&ki)) { // @Todo
         char c = win_key_to_char(ki);
         if (ki.mod & RELEASE) {
             continue;
@@ -88,4 +112,6 @@ def_prg_update(prg_update)
             println("Input is not a text char");
         }
     }
+    
+    return 0;
 }

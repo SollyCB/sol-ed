@@ -15,6 +15,8 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_GetSwapchainImagesKHR] = {.name = "vkGetSwapchainImagesKHR"},
     [VDT_CreateImageView] = {.name = "vkCreateImageView"},
     [VDT_DestroyImageView] = {.name = "vkDestroyImageView"},
+    [VDT_CreateShaderModule] = {.name = "vkCreateShaderModule"},
+    [VDT_DestroyShaderModule] = {.name = "vkDestroyShaderModule"},
 };
 #else
 struct vdt *vdt;

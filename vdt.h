@@ -21,6 +21,8 @@ enum {
     VDT_GetSwapchainImagesKHR,
     VDT_CreateImageView,
     VDT_DestroyImageView,
+    VDT_CreateShaderModule,
+    VDT_DestroyShaderModule,
     VDT_DEV_END,
     
     // Other meta info
@@ -110,6 +112,14 @@ static inline VkResult vk_create_image_view(VkImageViewCreateInfo *ci, VkImageVi
 
 static inline void vk_destroy_image_view(VkImageView view) {
     vdt_call(DestroyImageView)(gpu->dev, view, GAC);
+}
+
+static inline VkResult vk_create_shader_module(VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
+    return cvk(vdt_call(CreateShaderModule)(gpu->dev, ci, GAC, mod));
+}
+
+static inline void vk_destroy_shader_module(VkShaderModule mod) {
+    vdt_call(DestroyShaderModule)(gpu->dev, mod, GAC);
 }
 
 def_cvk(cvk_fn)
