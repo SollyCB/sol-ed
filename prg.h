@@ -36,6 +36,10 @@ typedef def_should_prg_reload(should_prg_reload_t);
 #define def_prg_update(name) int name(void)
 typedef def_prg_update(prg_update_t);
 
+enum program_flags {
+    PRG_RLD = 0x01,
+};
+
 struct program {
     struct {
         create_prg_t (*create);

@@ -84,29 +84,25 @@ def_win_poll(win_poll)
                 switch(e.window.event) {
                     case SDL_WINDOWEVENT_RESTORED:
                     println("Window size restored");
-                    case SDL_WINDOWEVENT_RESIZED:
-                    win->flags &= ~WIN_SZ;
-                    win->flags |= WIN_RSZ;
-                    break;
+                    case SDL_WINDOWEVENT_RESIZED: {
+                        win->flags &= ~WIN_SZ;
+                        win->flags |= WIN_RSZ;
+                    } break;
                     
-                    case SDL_WINDOWEVENT_MINIMIZED:
-                    win->flags &= ~WIN_SZ;
-                    win->flags |= WIN_MIN;
-                    break;
+                    case SDL_WINDOWEVENT_MINIMIZED: {
+                        win->flags &= ~WIN_SZ;
+                        win->flags |= WIN_MIN;
+                    } break;
                     
-                    case SDL_WINDOWEVENT_MAXIMIZED:
-                    win->flags &= ~WIN_SZ;
-                    win->flags |= WIN_MAX;
-                    break;
+                    case SDL_WINDOWEVENT_MAXIMIZED: {
+                        win->flags &= ~WIN_SZ;
+                        win->flags |= WIN_MAX;
+                    } break;
                     
-                    case SDL_WINDOWEVENT_ENTER:
-                    break;
-                    case SDL_WINDOWEVENT_LEAVE:
-                    break;
-                    case SDL_WINDOWEVENT_FOCUS_GAINED:
-                    break;
-                    case SDL_WINDOWEVENT_FOCUS_LOST:
-                    break;
+                    case SDL_WINDOWEVENT_ENTER: break;
+                    case SDL_WINDOWEVENT_LEAVE: break;
+                    case SDL_WINDOWEVENT_FOCUS_GAINED: break;
+                    case SDL_WINDOWEVENT_FOCUS_LOST: break;
                     
                     default:
                     break;

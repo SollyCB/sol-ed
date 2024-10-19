@@ -18,6 +18,8 @@ def_prg_load(prg_load)
     prg->fn.should_shutdown = should_prg_shutdown;
     prg->fn.should_reload = should_prg_reload;
     prg->fn.update = prg_update;
+    
+    prg->flags &= ~PRG_RLD;
 }
 
 internal struct thread_config {
@@ -60,26 +62,16 @@ def_should_prg_shutdown(should_prg_shutdown)
 
 def_should_prg_reload(should_prg_reload)
 {
-    local_persist u32 mod_check_timer = 0;
-    
-    if (win_ms() < mod_check_timer)
-        return false;
-    mod_check_timer = win_ms() + secs_to_ms(2);
-    
-    int lib = cmpftim(FTIM_MOD, LIB_SRC, LIB_SRC_TEMP);
-    log_error_if(lib == Max_s32, "Failed to compare lib mod time");
-    if (lib < 0) {
-        println("Library code will be reloaded");
-        return true;
-    }
-    
-    return false;
+    return prg->flags & PRG_RLD;
 }
+
+#define RLD_WT secs_to_ms(2) /* Time the hot reloader waits before checking for source changes */
 
 def_prg_update(prg_update)
 {
     prg->frames.cnt++;
     
+    /* timers */
     prg->time.dms = SDL_GetTicks() - prg->time.ms;
     prg->time.ms += prg->time.dms;
     
@@ -89,25 +81,31 @@ def_prg_update(prg_update)
     prg->frames.avg = prg->time.ms / prg->frames.cnt;
     // println("frame avg dt %u", prg->frames.avg);
     
-    local_persist u32 shader_mod_timer = 0;
-    if (shader_mod_timer < win_ms()) {
-        shader_mod_timer += secs_to_ms(3);
+    /* hotloader */
+    internal u32 rld_timer = 0;
+    if (rld_timer == 0)
+        rld_timer = win_ms();
+    
+    if (rld_timer < win_ms()) {
+        rld_timer += RLD_WT;
         
-        int vert = cmpftim(FTIM_MOD, SH_VERT_SRC_URI, SH_SRC_URI);
-        int frag = cmpftim(FTIM_MOD, SH_FRAG_SRC_URI, SH_SRC_URI);
-        log_error_if(vert == Max_s32, "Failed to compare vertex shader mod time");
-        log_error_if(frag == Max_s32, "Failed to compare fragment shader mod time");
-        if (vert < 0 || frag < 0) {
+        if (cmpftim(FTIM_MOD, LIB_SRC, LIB_SRC_TEMP) < 0)
+            prg->flags |= PRG_RLD;
+        
+        if (cmpftim(FTIM_MOD, SH_VERT_SRC_URI, SH_SRC_URI) < 0 ||
+            cmpftim(FTIM_MOD, SH_FRAG_SRC_URI, SH_SRC_URI) < 0)
+        {
             println("Recompiling shaders");
             // spirv parser to recreate pipeline layout?
             if (gpu_create_sh()) {
-                log_error("Failed to compile shader code");
+                log_error("Failed to recompile shader code after source change");
                 if (!gpu->sh.vert || !gpu->sh.frag)
                     return -1;
             }
         }
     }
     
+    /* window */
     win_poll();
     
     switch(win->flags & WIN_SZ) {
