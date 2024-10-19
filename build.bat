@@ -9,5 +9,5 @@ set link_flags=/nologo /incremental:no /opt:ref C:\VulkanSDK\1.3.296.0\Lib\vulka
 
 pushd build\
 cl %cl_flags% ..\lib_src.c -Felib_src_temp -LD /link %link_flags%
-:: cl %cl_flags% ..\exe_src.c /link %link_flags%
+cl %cl_flags% ..\exe_src.c /link %link_flags%
 popd

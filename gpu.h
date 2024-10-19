@@ -3,21 +3,36 @@
 
 #include <vulkan/vulkan.h>
 
-#define SC_MAX_IMGS 4
+#include "shader.h"
+#include "chars.h"
+
+#define SC_MAX_IMGS 4 /* Arbitrarily small size that I doubt will be exceeded */
 #define SC_MIN_IMGS 2
 
-enum dsl_indices {
-    DSL_UB,
-    DSL_SI,
-    DSL_CNT,
-};
+#define GPU_ALLOC_CNT 3 /* image, vertex, transfer */
+#define GPU_BUF_CNT 2 /* vertex, transfer */
 
 struct gpu {
     VkInstance inst;
     VkSurfaceKHR surf;
+    VkPhysicalDeviceProperties props;
     VkPhysicalDevice phys_dev;
     VkDevice dev;
-    VkPhysicalDeviceProperties props;
+    
+    struct {
+        struct {
+            VkDeviceMemory mem;
+            u64 size;
+            u64 used;
+        } allocs[GPU_ALLOC_CNT];
+        
+        struct gpu_img {
+            VkImage img;
+            VkImageView view;
+        } imgs[CHT_SZ];
+        
+        VkBuffer bufs[GPU_BUF_CNT];
+    } mem;
     
     struct { u32 g,t,p; } qi; // queue indices
     struct { VkQueue g,t,p; } qh; // queue handles
@@ -39,8 +54,11 @@ struct gpu {
     VkPipelineLayout pll;
     VkPipeline pl;
     VkRenderPass rp;
-    VkDescriptorSetLayout dsl[DSL_CNT];
     VkFramebuffer fb[SC_MAX_IMGS];
+    
+    VkDescriptorSetLayout dsl;
+    VkDescriptorPool dp;
+    VkDescriptorSet ds[CHT_SZ];
 };
 
 #ifdef LIB

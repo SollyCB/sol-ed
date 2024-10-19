@@ -6,8 +6,7 @@
 #define SH_VERT_OUT_URI "shader.vert.spv"
 #define SH_FRAG_OUT_URI "shader.frag.spv"
 
-#define SH_UB_CNT 1024
-#define SH_SI_CNT 127
+#define SH_SI_SET 0 /* sampler descriptor set index*/
 
 #define SH_ENTRY_POINT "main"
 
@@ -19,6 +18,8 @@
 #define SH_FRAG_BEGIN_STR stringify(SH_FRAG_BEGIN)
 #define SH_VERT_END_STR stringify(SH_VERT_END)
 #define SH_FRAG_END_STR stringify(SH_FRAG_END)
+
+#define SH_SI_CNT 127
 
 #if GL_core_profile
 

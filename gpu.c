@@ -1,10 +1,46 @@
+#include "external/stb_truetype.h"
+
 #include "prg.h"
 #include "win.h"
 #include "vdt.h"
 #include "gpu.h"
 #include "shader.h"
+#include "chars.h"
 
 struct gpu *gpu;
+
+#define GPU_VB_SZ mb(64) /* Both arbitrary, need to be able to contain 2 frames of data */
+#define GPU_TB_SZ mb(64)
+
+internal int gpu_create_mem(void)
+{
+    u64 sz = read_file(FONT_URI, NULL, 0);
+    u8 *data = salloc(MT, sz);
+    read_file(FONT_URI, data, sz);
+    
+    stbtt_fontinfo font;
+    stbtt_InitFont(&font, data, stbtt_GetFontOffsetForIndex(data, 0));
+    
+    int w = 0;
+    int h = 0;
+    u8 *bm[CHT_SZ] = {};
+    for(u32 i=0; i < cl_array_size(bm); ++i) {
+        if (cht[i] && !is_whitechar(cht[i])) {
+            int tw = w;
+            int th = h;
+            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
+                                             cht[i], &w, &h, NULL, NULL);
+            log_error_if(tw != 0 && th != 0 && (tw != w || th != th), "This should be a monospaced font");
+        }
+    }
+    
+    for(u32 i=0; i < cl_array_size(bm); ++i) {
+        if (bm[i])
+            stbtt_FreeBitmap(bm[i], NULL);
+    }
+    
+    return 0;
+}
 
 internal int gpu_create_sc(void)
 {
@@ -94,47 +130,20 @@ internal VkShaderModule gpu_create_shader(struct string spv)
 
 internal int gpu_create_dsl(void)
 {
-    local_persist VkDescriptorSetLayoutBinding b[] = {
-        [DSL_UB] = {
-            .binding = DSL_UB,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .descriptorCount = SH_UB_CNT,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,
-        },
-        [DSL_SI] = {
-            .binding = DSL_SI,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = SH_SI_CNT,
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-        }
+    local_persist VkDescriptorSetLayoutBinding b = {
+        .binding = SH_SI_SET,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = CHT_SZ,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
     };
-    local_persist VkDescriptorSetLayoutCreateInfo ci[] = {
-        [DSL_UB] = {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &b[DSL_UB],
-        },
-        [DSL_SI] = {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &b[DSL_SI],
-        },
+    local_persist VkDescriptorSetLayoutCreateInfo ci = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &b,
     };
     
-    VkDescriptorSetLayout dsl[DSL_CNT] = {};
-    for(u32 i=0; i < cl_array_size(ci); ++i) {
-        if (vk_create_dsl(&ci[i], &dsl[i])) {
-            while(--i < Max_u32)
-                vk_destroy_dsl(dsl[i]);
-            return -1;
-        }
-    }
-    
-    for(u32 i=0; i < cl_array_size(ci); ++i) {
-        if (gpu->dsl[i])
-            vk_destroy_dsl(gpu->dsl[i]);
-        gpu->dsl[i] = dsl[i];
-    }
+    if (vk_create_dsl(&ci, &gpu->dsl))
+        return -1;
     
     return 0;
 }
@@ -144,16 +153,40 @@ internal int gpu_create_pll(void)
     VkPipelineLayoutCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = gpu->dsl,
+        .pSetLayouts = &gpu->dsl,
     };
     
-    VkPipelineLayout tmp = VK_NULL_HANDLE;
-    if (vk_create_pll(&ci, &tmp))
+    if (vk_create_pll(&ci, &gpu->pll))
         return -1;
     
-    if (gpu->pll)
-        vk_destroy_pll(gpu->pll);
-    gpu->pll = tmp;
+    return 0;
+}
+
+internal int gpu_create_ds(void)
+{
+    if (gpu->dp == VK_NULL_HANDLE) {
+        local_persist VkDescriptorPoolSize sz = {
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = CHT_SZ,
+        };
+        
+        local_persist VkDescriptorPoolCreateInfo ci = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = 1,
+            .poolSizeCount = 1,
+            .pPoolSizes = &sz,
+        };
+        if (vk_create_dp(&ci, &gpu->dp))
+            return -1;
+    }
+    
+    VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = gpu->dp;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &gpu->dsl;
+    
+    if (vk_alloc_ds(&ai, gpu->ds))
+        return -1;
     
     return 0;
 }
@@ -343,6 +376,9 @@ internal int gpu_create_pl(void)
     
     return 0;
 }
+
+/*******************************************************************/
+// Header functions
 
 def_create_gpu(create_gpu)
 {
@@ -556,9 +592,11 @@ def_create_gpu(create_gpu)
             return -1;
     }
     
+    gpu_create_mem();
     gpu_create_sh();
     gpu_create_dsl();
     gpu_create_pll();
+    gpu_create_ds();
     gpu_create_rp();
     gpu_create_fb();
     gpu_create_pl();

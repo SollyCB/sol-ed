@@ -28,6 +28,9 @@ enum {
     VDT_DestroyDescriptorSetLayout,
     VDT_CreatePipelineLayout,
     VDT_DestroyPipelineLayout,
+    VDT_CreateDescriptorPool,
+    VDT_DestroyDescriptorPool,
+    VDT_AllocateDescriptorSets,
     VDT_CreateRenderPass,
     VDT_DestroyRenderPass,
     VDT_CreateFramebuffer,
@@ -151,6 +154,18 @@ static inline VkResult vk_create_pll(VkPipelineLayoutCreateInfo *ci, VkPipelineL
 
 static inline void vk_destroy_pll(VkPipelineLayout pll) {
     vdt_call(DestroyPipelineLayout)(gpu->dev, pll, GAC);
+}
+
+static inline VkResult vk_create_dp(VkDescriptorPoolCreateInfo *ci, VkDescriptorPool *dp) {
+    return cvk(vdt_call(CreateDescriptorPool)(gpu->dev, ci, GAC, dp));
+}
+
+static inline void vk_destroy_dp(VkDescriptorPool dp) {
+    vdt_call(DestroyDescriptorPool)(gpu->dev, dp, GAC);
+}
+
+static inline VkResult vk_alloc_ds(VkDescriptorSetAllocateInfo *ai, VkDescriptorSet *ds) {
+    return cvk(vdt_call(AllocateDescriptorSets)(gpu->dev, ai, ds));
 }
 
 static inline VkResult vk_create_rp(VkRenderPassCreateInfo *ci, VkRenderPass *rp) {
