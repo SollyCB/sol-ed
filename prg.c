@@ -110,8 +110,30 @@ def_prg_update(prg_update)
     
     win_poll();
     
-    if (win->flags & WIN_RSZ)
-        gpu_handle_win_resize();
+    switch(win->flags & WIN_SZ) {
+        case 0: break;
+        
+        case WIN_MAX:
+        case WIN_RSZ: {
+            gpu_handle_win_resize();
+            win->flags &= ~WIN_SZ;
+        } break;
+        
+        case WIN_MIN: {
+            local_persist u32 pause_msg_timer = 0;
+            if (pause_msg_timer == 0)
+                pause_msg_timer = win_ms();
+            
+            if (pause_msg_timer < win_ms()) {
+                pause_msg_timer += secs_to_ms(2);
+                println("Paused while minimized");
+            }
+            return 0;
+        } break;
+        
+        default:
+        invalid_default_case;
+    }
     
     struct keyboard_input ki;
     while(win_kb_next(&ki)) { // @Todo
@@ -120,6 +142,7 @@ def_prg_update(prg_update)
             continue;
         } else if (ki.key == KEY_ESCAPE) {
             win->flags |= WIN_CLO;
+            //vkDestroyDevice(gpu->dev, NULL); // check if objects are being leaked
         } else if (c > 0) {
             println("Got input %c", c);
         } else {
