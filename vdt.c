@@ -12,11 +12,23 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_GetPhysicalDeviceSurfacePresentModesKHR] = {.name = "vkGetPhysicalDeviceSurfacePresentModesKHR"},
     [VDT_GetDeviceQueue] = {.name = "vkGetDeviceQueue"},
     [VDT_CreateSwapchainKHR] = {.name = "vkCreateSwapchainKHR"},
+    [VDT_DestroySwapchainKHR] = {.name = "vkDestroySwapchainKHR"},
     [VDT_GetSwapchainImagesKHR] = {.name = "vkGetSwapchainImagesKHR"},
     [VDT_CreateImageView] = {.name = "vkCreateImageView"},
     [VDT_DestroyImageView] = {.name = "vkDestroyImageView"},
     [VDT_CreateShaderModule] = {.name = "vkCreateShaderModule"},
     [VDT_DestroyShaderModule] = {.name = "vkDestroyShaderModule"},
+    [VDT_CreateDescriptorSetLayout] = {.name = "vkCreateDescriptorSetLayout"},
+    [VDT_DestroyDescriptorSetLayout] = {.name = "vkDestroyDescriptorSetLayout"},
+    [VDT_CreatePipelineLayout] = {.name = "vkCreatePipelineLayout"},
+    [VDT_DestroyPipelineLayout] = {.name = "vkDestroyPipelineLayout"},
+    [VDT_CreateRenderPass] = {.name = "vkCreateRenderPass"},
+    [VDT_DestroyRenderPass] = {.name = "vkDestroyRenderPass"},
+    [VDT_CreateFramebuffer] = {.name = "vkCreateFramebuffer"},
+    [VDT_DestroyFramebuffer] = {.name = "vkDestroyFramebuffer"},
+    [VDT_CreateGraphicsPipelines] = {.name = "vkCreateGraphicsPipelines"},
+    [VDT_DestroyPipeline] = {.name = "vkDestroyPipeline"},
+    
 };
 #else
 struct vdt *vdt;

@@ -64,10 +64,12 @@ def_should_prg_reload(should_prg_reload)
     
     if (win_ms() < mod_check_timer)
         return false;
-    
     mod_check_timer = win_ms() + secs_to_ms(2);
-    if (cmp_ftim(FTIM_MOD, LIB_SRC, LIB_SRC_TEMP) < 0) {
-        println("Library code is flagged for reload");
+    
+    int lib = cmpftim(FTIM_MOD, LIB_SRC, LIB_SRC_TEMP);
+    log_error_if(lib == Max_s32, "Failed to compare lib mod time");
+    if (lib < 0) {
+        println("Library code will be reloaded");
         return true;
     }
     
@@ -85,27 +87,39 @@ def_prg_update(prg_update)
         prg->frames.worst = prg->time.dms;
     
     prg->frames.avg = prg->time.ms / prg->frames.cnt;
-    println("frame avg dt %u", prg->frames.avg);
+    // println("frame avg dt %u", prg->frames.avg);
     
-    // This comparison seems to be wrong but functions correctly;
-    // see equivalent check in should_prg_reload().
-    if (cmp_ftim(FTIM_MOD, SH_SRC_URI, SH_VERT_SRC_URI) > 0 ||
-        cmp_ftim(FTIM_MOD, SH_SRC_URI, SH_FRAG_SRC_URI) > 0)
-    {
-        println("Recompiling shaders");
-        if (gpu_compile_shaders()) {
-            log_error("Failed to compile shader code");
-            if (!gpu->sh.vert || !gpu->sh.frag)
-                return -1;
+    local_persist u32 shader_mod_timer = 0;
+    if (shader_mod_timer < win_ms()) {
+        shader_mod_timer += secs_to_ms(3);
+        
+        int vert = cmpftim(FTIM_MOD, SH_VERT_SRC_URI, SH_SRC_URI);
+        int frag = cmpftim(FTIM_MOD, SH_FRAG_SRC_URI, SH_SRC_URI);
+        log_error_if(vert == Max_s32, "Failed to compare vertex shader mod time");
+        log_error_if(frag == Max_s32, "Failed to compare fragment shader mod time");
+        if (vert < 0 || frag < 0) {
+            println("Recompiling shaders");
+            // spirv parser to recreate pipeline layout?
+            if (gpu_create_sh()) {
+                log_error("Failed to compile shader code");
+                if (!gpu->sh.vert || !gpu->sh.frag)
+                    return -1;
+            }
         }
     }
     
     win_poll();
+    
+    if (win->flags & WIN_RSZ)
+        gpu_handle_win_resize();
+    
     struct keyboard_input ki;
     while(win_kb_next(&ki)) { // @Todo
         char c = win_key_to_char(ki);
         if (ki.mod & RELEASE) {
             continue;
+        } else if (ki.key == KEY_ESCAPE) {
+            win->flags |= WIN_CLO;
         } else if (c > 0) {
             println("Got input %c", c);
         } else {

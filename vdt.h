@@ -18,11 +18,22 @@ enum {
     // Device API
     VDT_GetDeviceQueue,
     VDT_CreateSwapchainKHR,
+    VDT_DestroySwapchainKHR,
     VDT_GetSwapchainImagesKHR,
     VDT_CreateImageView,
     VDT_DestroyImageView,
     VDT_CreateShaderModule,
     VDT_DestroyShaderModule,
+    VDT_CreateDescriptorSetLayout,
+    VDT_DestroyDescriptorSetLayout,
+    VDT_CreatePipelineLayout,
+    VDT_DestroyPipelineLayout,
+    VDT_CreateRenderPass,
+    VDT_DestroyRenderPass,
+    VDT_CreateFramebuffer,
+    VDT_DestroyFramebuffer,
+    VDT_CreateGraphicsPipelines,
+    VDT_DestroyPipeline,
     VDT_DEV_END,
     
     // Other meta info
@@ -62,64 +73,108 @@ def_cvk(cvk_fn);
 
 #define vdt_call(name) ((PFN_vk ## name)(vdt->table[VDT_ ## name].fn))
 
-static inline VkResult vk_create_instance(VkInstanceCreateInfo *info) {
+static inline VkResult vk_create_inst(VkInstanceCreateInfo *info) {
     return cvk(vkCreateInstance(info, GAC, &gpu->inst));
 }
 
-static inline VkResult vk_enumerate_physical_devices(u32 *cnt, VkPhysicalDevice *devs) {
+static inline VkResult vk_enum_phys_devs(u32 *cnt, VkPhysicalDevice *devs) {
     return cvk(vdt_call(EnumeratePhysicalDevices)(gpu->inst, cnt, devs));
 }
 
-static inline void vk_get_physical_device_properties(VkPhysicalDevice dev, VkPhysicalDeviceProperties *props) {
+static inline void vk_get_phys_dev_props(VkPhysicalDevice dev, VkPhysicalDeviceProperties *props) {
     vdt_call(GetPhysicalDeviceProperties)(dev, props);
 }
 
-static inline void vk_get_physical_device_queue_family_properties(u32 *cnt, VkQueueFamilyProperties *props) {
+static inline void vk_get_phys_devq_fam_props(u32 *cnt, VkQueueFamilyProperties *props) {
     vdt_call(GetPhysicalDeviceQueueFamilyProperties)(gpu->phys_dev, cnt, props);
 }
 
-static inline VkResult vk_get_physical_device_surface_support_khr(u32 qfi, b32 *support) {
+static inline VkResult vk_get_phys_dev_surf_support_khr(u32 qfi, b32 *support) {
     return cvk(vdt_call(GetPhysicalDeviceSurfaceSupportKHR)(gpu->phys_dev, qfi, gpu->surf, support));
 }
 
-static inline VkResult vk_create_device(VkDeviceCreateInfo *ci) {
+static inline VkResult vk_create_dev(VkDeviceCreateInfo *ci) {
     return cvk(vdt_call(CreateDevice)(gpu->phys_dev, ci, GAC, &gpu->dev));
 }
 
-static inline void vk_get_physical_device_surface_capabilities_khr(VkSurfaceCapabilitiesKHR *cap) {
+static inline void vk_get_phys_dev_surf_cap_khr(VkSurfaceCapabilitiesKHR *cap) {
     vdt_call(GetPhysicalDeviceSurfaceCapabilitiesKHR)(gpu->phys_dev, gpu->surf, cap);
 }
 
-static inline void vk_get_physical_device_surface_formats_khr(u32 *cnt, VkSurfaceFormatKHR *fmts) {
+static inline void vk_get_phys_dev_surf_fmts_khr(u32 *cnt, VkSurfaceFormatKHR *fmts) {
     vdt_call(GetPhysicalDeviceSurfaceFormatsKHR)(gpu->phys_dev, gpu->surf, cnt, fmts);
 }
 
-static inline void vk_get_device_queue(u32 qi, VkQueue *qh) {
+static inline void vk_get_devq(u32 qi, VkQueue *qh) {
     vdt_call(GetDeviceQueue)(gpu->dev, qi, 0, qh);
 }
 
-static inline VkResult vk_create_swapchain_khr(void) {
-    return cvk(vdt_call(CreateSwapchainKHR)(gpu->dev, &gpu->sc.info, GAC, &gpu->sc.handle));
+static inline VkResult vk_create_sc_khr(VkSwapchainCreateInfoKHR *ci, VkSwapchainKHR *sc) {
+    return cvk(vdt_call(CreateSwapchainKHR)(gpu->dev, ci, GAC, sc));
 }
 
-static inline VkResult vk_get_swapchain_images_khr(u32 *cnt, VkImage *imgs) {
+static inline void vk_destroy_sc_khr(VkSwapchainKHR sc) {
+    return vdt_call(DestroySwapchainKHR)(gpu->dev, sc, GAC);
+}
+
+static inline VkResult vk_get_sc_imgs_khr(u32 *cnt, VkImage *imgs) {
     return cvk(vdt_call(GetSwapchainImagesKHR)(gpu->dev, gpu->sc.handle, cnt, imgs));
 }
 
-static inline VkResult vk_create_image_view(VkImageViewCreateInfo *ci, VkImageView *view) {
+static inline VkResult vk_create_imgv(VkImageViewCreateInfo *ci, VkImageView *view) {
     return cvk(vdt_call(CreateImageView)(gpu->dev, ci, GAC, view));
 }
 
-static inline void vk_destroy_image_view(VkImageView view) {
+static inline void vk_destroy_imgv(VkImageView view) {
     vdt_call(DestroyImageView)(gpu->dev, view, GAC);
 }
 
-static inline VkResult vk_create_shader_module(VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
+static inline VkResult vk_create_shmod(VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
     return cvk(vdt_call(CreateShaderModule)(gpu->dev, ci, GAC, mod));
 }
 
-static inline void vk_destroy_shader_module(VkShaderModule mod) {
+static inline void vk_destroy_shmod(VkShaderModule mod) {
     vdt_call(DestroyShaderModule)(gpu->dev, mod, GAC);
+}
+
+static inline VkResult vk_create_dsl(VkDescriptorSetLayoutCreateInfo *ci, VkDescriptorSetLayout *dsl) {
+    return cvk(vdt_call(CreateDescriptorSetLayout)(gpu->dev, ci, GAC, dsl));
+}
+
+static inline void vk_destroy_dsl(VkDescriptorSetLayout dsl) {
+    vdt_call(DestroyDescriptorSetLayout)(gpu->dev, dsl, GAC);
+}
+
+static inline VkResult vk_create_pll(VkPipelineLayoutCreateInfo *ci, VkPipelineLayout *pll) {
+    return cvk(vdt_call(CreatePipelineLayout)(gpu->dev, ci, GAC, pll));
+}
+
+static inline void vk_destroy_pll(VkPipelineLayout pll) {
+    vdt_call(DestroyPipelineLayout)(gpu->dev, pll, GAC);
+}
+
+static inline VkResult vk_create_rp(VkRenderPassCreateInfo *ci, VkRenderPass *rp) {
+    return cvk(vdt_call(CreateRenderPass)(gpu->dev, ci, GAC, rp));
+}
+
+static inline void vk_destroy_rp(VkRenderPass rp) {
+    vdt_call(DestroyRenderPass)(gpu->dev, rp, GAC);
+}
+
+static inline VkResult vk_create_fb(VkFramebufferCreateInfo *ci, VkFramebuffer *fb) {
+    return cvk(vdt_call(CreateFramebuffer)(gpu->dev, ci, GAC, fb));
+}
+
+static inline void vk_destroy_fb(VkFramebuffer fb) {
+    vdt_call(DestroyFramebuffer)(gpu->dev, fb, GAC);
+}
+
+static inline VkResult vk_create_gpl(u32 cnt, VkGraphicsPipelineCreateInfo *ci, VkPipeline *pl) {
+    return cvk(vdt_call(CreateGraphicsPipelines)(gpu->dev, NULL, cnt, ci, GAC, pl));
+}
+
+static inline void vk_destroy_pl(VkPipeline pl) {
+    vdt_call(DestroyPipeline)(gpu->dev, pl, GAC);
 }
 
 def_cvk(cvk_fn)

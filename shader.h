@@ -6,8 +6,10 @@
 #define SH_VERT_OUT_URI "shader.vert.spv"
 #define SH_FRAG_OUT_URI "shader.frag.spv"
 
-#define SH_ENTRY_POINT main
-#define SH_ENTRY_POINT_STR stringify(SHADER_ENTRY_POINT)
+#define SH_UB_CNT 1024
+#define SH_SI_CNT 127
+
+#define SH_ENTRY_POINT "main"
 
 #define SH_VERT_BEGIN
 #define SH_FRAG_BEGIN

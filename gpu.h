@@ -3,8 +3,14 @@
 
 #include <vulkan/vulkan.h>
 
-#define MAX_SWAPCHAIN_IMAGES 4
-#define MIN_SWAPCHAIN_IMAGES 2
+#define SC_MAX_IMGS 4
+#define SC_MIN_IMGS 2
+
+enum dsl_indices {
+    DSL_UB,
+    DSL_SI,
+    DSL_CNT,
+};
 
 struct gpu {
     VkInstance inst;
@@ -21,8 +27,8 @@ struct gpu {
         VkSwapchainCreateInfoKHR info;
         
         u32 img_cnt;
-        VkImage images[MAX_SWAPCHAIN_IMAGES];
-        VkImageView views[MAX_SWAPCHAIN_IMAGES];
+        VkImage imgs[SC_MAX_IMGS];
+        VkImageView views[SC_MAX_IMGS];
     } sc;
     
     struct {
@@ -32,6 +38,9 @@ struct gpu {
     
     VkPipelineLayout pll;
     VkPipeline pl;
+    VkRenderPass rp;
+    VkDescriptorSetLayout dsl[DSL_CNT];
+    VkFramebuffer fb[SC_MAX_IMGS];
 };
 
 #ifdef LIB
@@ -40,8 +49,11 @@ extern struct gpu *gpu;
 #define def_create_gpu(name) int name(void)
 def_create_gpu(create_gpu);
 
-#define def_gpu_compile_shaders(name) int name(void)
-def_gpu_compile_shaders(gpu_compile_shaders);
+#define def_gpu_create_sh(name) int name(void)
+def_gpu_create_sh(gpu_create_sh);
+
+#define def_gpu_handle_win_resize(name) int name(void)
+def_gpu_handle_win_resize(gpu_handle_win_resize);
 
 #endif // ifdef LIB
 
