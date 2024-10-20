@@ -19,7 +19,7 @@
 #define SH_VERT_END_STR stringify(SH_VERT_END)
 #define SH_FRAG_END_STR stringify(SH_FRAG_END)
 
-#define SH_SI_CNT 127
+#define SH_SI_CNT ('~' - '!' + 1)
 
 #if GL_core_profile
 

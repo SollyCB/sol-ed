@@ -1,10 +1,6 @@
 #include "chars.h"
 
 char cht[CHT_SZ] = {
-    [CH_RET] = '\n',
-    [CH_TAB] = '\t',
-    [CH_SPC] = ' ',
-    
     [CH_a] = 'a',
     [CH_b] = 'b',
     [CH_c] = 'c',

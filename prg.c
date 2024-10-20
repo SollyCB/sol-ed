@@ -108,6 +108,8 @@ def_prg_update(prg_update)
     /* window */
     win_poll();
     
+    bool got_input = false;
+    
     switch(win->flags & WIN_SZ) {
         case 0: break;
         
@@ -126,7 +128,6 @@ def_prg_update(prg_update)
                 pause_msg_timer += secs_to_ms(2);
                 println("Paused while minimized");
             }
-            return 0;
         } break;
         
         default:
@@ -135,6 +136,7 @@ def_prg_update(prg_update)
     
     struct keyboard_input ki;
     while(win_kb_next(&ki)) { // @Todo
+        got_input = true;
         char c = win_key_to_char(ki);
         if (ki.mod & RELEASE) {
             continue;
@@ -147,6 +149,9 @@ def_prg_update(prg_update)
             println("Input is not a text char");
         }
     }
+    
+    if (!got_input)
+        os_sleep_ms(0); // relinquish time slice
     
     return 0;
 }

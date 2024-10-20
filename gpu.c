@@ -12,8 +12,122 @@ struct gpu *gpu;
 #define GPU_VB_SZ mb(64) /* Both arbitrary, need to be able to contain 2 frames of data */
 #define GPU_TB_SZ mb(64)
 
+extern char* gpu_mem_names[GPU_MEM_CNT] = {
+    [GPU_MEM_V] = "Vertex",
+    [GPU_MEM_T] = "Transfer",
+    [GPU_MEM_I] = "Image",
+};
+
+union gpu_memreq_info {
+    VkBufferCreateInfo *buf;
+    VkImageCreateInfo *img;
+};
+
+internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequirements *mr)
+{
+    switch(i) {
+        case GPU_MEM_I: {
+            VkImage img;
+            if (vk_create_img(info.img, &img))
+                break;
+            vk_get_img_memreq(img, mr);
+            vk_destroy_img(img);
+        } return 0;
+        
+        case GPU_MEM_V:
+        case GPU_MEM_T: {
+            VkBuffer buf;
+            if (vk_create_buf(info.buf, &buf))
+                break;
+            vk_get_buf_memreq(buf, mr);
+            vk_destroy_buf(buf);
+        } return 0;
+        
+        default: invalid_default_case;
+    }
+    log_error("Failed to create dummy object for getting memory requirements (%s)", gpu_mem_names[i]);
+    return -1;
+}
+
+internal u32 gpu_mem_type(u32 req)
+{
+    // Ensure that a memory type requiring device features cannot be chosen.
+    u32 mem_mask = Max_u32 << (ctz(VK_MEMORY_PROPERTY_PROTECTED_BIT) + 1);
+    u64 max_heap = 0;
+    
+    u32 type = Max_u32;
+    u32 cnt,tz;
+    for_bits(tz, cnt, req) {
+        if(gpu->memprops.memoryTypes[tz].propertyFlags & mem_mask)
+            continue;
+        if ((gpu->memprops.memoryTypes[tz].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            (gpu->memprops.memoryHeaps[gpu->memprops.memoryTypes[tz].heapIndex].size > max_heap))
+        {
+            type = tz;
+            max_heap = gpu->memprops.memoryHeaps[gpu->memprops.memoryTypes[tz].heapIndex].size;
+        }
+    }
+    
+    return type;
+}
+
 internal int gpu_create_mem(void)
 {
+    local_persist VkImageCreateInfo ici = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R8_UINT,
+        .extent = {.width = 1,.height = 1,.depth = 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    
+    local_persist VkBufferCreateInfo bci[GPU_BUF_CNT] = {
+        [GPU_BUF_V] = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 1,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        },
+        [GPU_BUF_T] = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 1,
+            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        },
+    };
+    
+    if (!(gpu->flags & GPU_MEM_INI)) {
+        if (gpu->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+            gpu->flags |= GPU_MEM_UNI;
+        
+        vk_get_phys_dev_memprops(gpu->phys_dev, &gpu->memprops);
+        
+        union gpu_memreq_info mr_infos[GPU_MEM_CNT] = {
+            [GPU_MEM_V] = {.buf = &bci[GPU_BUF_V]},
+            [GPU_MEM_T] = {.buf = &bci[GPU_BUF_T]},
+            [GPU_MEM_I] = {.img = &ici},
+        };
+        
+        VkMemoryRequirements mr[GPU_MEM_CNT];
+        for(u32 i=0; i < GPU_MEM_CNT; ++i) {
+            if (gpu_memreq_helper(mr_infos[i], i, &mr[i])) {
+                log_error("Failed to get memory requirements for obj %u (%s)", i, gpu_mem_names[i]);
+                gpu->flags &= GPU_MEM_BITS;
+                return -1;
+            }
+        }
+        
+        // Only update state when nothing can fail
+        for(u32 i=0; i < GPU_MEM_CNT; ++i)
+            gpu->mem[i].type = mr[i].memoryTypeBits;
+        gpu->flags |= GPU_MEM_INI;
+    }
+    
+#if 0
+    u32 i;
+    int res = 0;
     u64 sz = read_file(FONT_URI, NULL, 0);
     u8 *data = salloc(MT, sz);
     read_file(FONT_URI, data, sz);
@@ -21,23 +135,43 @@ internal int gpu_create_mem(void)
     stbtt_fontinfo font;
     stbtt_InitFont(&font, data, stbtt_GetFontOffsetForIndex(data, 0));
     
-    int w = 0;
-    int h = 0;
-    u8 *bm[CHT_SZ] = {};
-    for(u32 i=0; i < cl_array_size(bm); ++i) {
-        if (cht[i] && !is_whitechar(cht[i])) {
-            int tw = w;
-            int th = h;
-            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
-                                             cht[i], &w, &h, NULL, NULL);
-            log_error_if(tw != 0 && th != 0 && (tw != w || th != th), "This should be a monospaced font");
+    u8 *bm[CHT_SZ];
+    struct gpu_glyph g[CHT_SZ];
+    VkMemoryRequirements mr[CHT_SZ];
+    
+    u64 img_sz = 0;
+    
+    int max_w = 0;
+    int max_h = 0;
+    for(i=0; i < cl_array_size(bm); ++i) {
+        int w,h;
+        bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
+                                         cht[i], &w, &h, NULL, NULL);
+        if (max_w < w) max_w = w;
+        if (max_h < h) max_h = h;
+        
+        ici.extent = {.width = w, .height = h, .depth = 1};
+        
+        VkImage img = VK_NULL_HANDLE;
+        if (vk_create_img(&ici, &g[i].img)) {
+            res = -1;
+            goto out;
         }
+        
+        vk_get_memreq_i(g[i].img, &mr[i]);
+        img_sz = align(img_sz, mr[i].alignment) + mr[i].size;
     }
     
-    for(u32 i=0; i < cl_array_size(bm); ++i) {
-        if (bm[i])
-            stbtt_FreeBitmap(bm[i], NULL);
+    if (gpu->mem.allocs[GPU_ALLOC_I].size < img_sz) {
+        
     }
+    
+    out:
+    while(--i < Max_u32) {
+        stbtt_FreeBitmap(bm[i], NULL);
+        vk_destroy_img(imgs[i]);
+    }
+#endif
     
     return 0;
 }

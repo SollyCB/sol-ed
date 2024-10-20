@@ -7,6 +7,7 @@ enum {
     // Instance API
     VDT_EnumeratePhysicalDevices,
     VDT_GetPhysicalDeviceProperties,
+    VDT_GetPhysicalDeviceMemoryProperties,
     VDT_GetPhysicalDeviceQueueFamilyProperties,
     VDT_GetPhysicalDeviceSurfaceSupportKHR,
     VDT_CreateDevice,
@@ -20,6 +21,12 @@ enum {
     VDT_CreateSwapchainKHR,
     VDT_DestroySwapchainKHR,
     VDT_GetSwapchainImagesKHR,
+    VDT_CreateBuffer,
+    VDT_DestroyBuffer,
+    VDT_CreateImage,
+    VDT_DestroyImage,
+    VDT_GetBufferMemoryRequirements,
+    VDT_GetImageMemoryRequirements,
     VDT_CreateImageView,
     VDT_DestroyImageView,
     VDT_CreateShaderModule,
@@ -88,6 +95,10 @@ static inline void vk_get_phys_dev_props(VkPhysicalDevice dev, VkPhysicalDeviceP
     vdt_call(GetPhysicalDeviceProperties)(dev, props);
 }
 
+static inline void vk_get_phys_dev_memprops(VkPhysicalDevice dev, VkPhysicalDeviceMemoryProperties *props) {
+    vdt_call(GetPhysicalDeviceMemoryProperties)(dev, props);
+}
+
 static inline void vk_get_phys_devq_fam_props(u32 *cnt, VkQueueFamilyProperties *props) {
     vdt_call(GetPhysicalDeviceQueueFamilyProperties)(gpu->phys_dev, cnt, props);
 }
@@ -122,6 +133,30 @@ static inline void vk_destroy_sc_khr(VkSwapchainKHR sc) {
 
 static inline VkResult vk_get_sc_imgs_khr(u32 *cnt, VkImage *imgs) {
     return cvk(vdt_call(GetSwapchainImagesKHR)(gpu->dev, gpu->sc.handle, cnt, imgs));
+}
+
+static inline VkResult vk_create_buf(VkBufferCreateInfo *ci, VkBuffer *buf) {
+    return cvk(vdt_call(CreateBuffer)(gpu->dev, ci, GAC, buf));
+}
+
+static inline void vk_destroy_buf(VkBuffer buf) {
+    vdt_call(DestroyBuffer)(gpu->dev, buf, GAC);
+}
+
+static inline VkResult vk_create_img(VkImageCreateInfo *ci, VkImage *img) {
+    return cvk(vdt_call(CreateImage)(gpu->dev, ci, GAC, img));
+}
+
+static inline void vk_destroy_img(VkImage img) {
+    vdt_call(DestroyImage)(gpu->dev, img, GAC);
+}
+
+static inline void vk_get_buf_memreq(VkBuffer buf, VkMemoryRequirements *mr) {
+    vdt_call(GetBufferMemoryRequirements)(gpu->dev, buf, GAC);
+}
+
+static inline void vk_get_img_memreq(VkImage img, VkMemoryRequirements *mr) {
+    vdt_call(GetImageMemoryRequirements)(gpu->dev, img, GAC);
 }
 
 static inline VkResult vk_create_imgv(VkImageViewCreateInfo *ci, VkImageView *view) {

@@ -9,30 +9,54 @@
 #define SC_MAX_IMGS 4 /* Arbitrarily small size that I doubt will be exceeded */
 #define SC_MIN_IMGS 2
 
-#define GPU_ALLOC_CNT 3 /* image, vertex, transfer */
-#define GPU_BUF_CNT 2 /* vertex, transfer */
+enum gpu_mem_indices {
+    GPU_MEM_V,
+    GPU_MEM_T,
+    GPU_MEM_I,
+    GPU_MEM_CNT,
+};
+
+enum gpu_buf_indices {
+    GPU_BUF_V,
+    GPU_BUF_T,
+    GPU_BUF_CNT,
+};
+
+enum gpu_flags {
+    GPU_MEM_INI = 0x01, // mem.type is valid
+    GPU_MEM_UNI = 0x02, // mem arch is unified
+    
+    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI,
+};
+
+struct gpu_glyph {
+    VkImage img;
+    VkImageView view;
+    int x,y,w,h;
+};
 
 struct gpu {
     VkInstance inst;
     VkSurfaceKHR surf;
     VkPhysicalDeviceProperties props;
+    VkPhysicalDeviceMemoryProperties memprops;
     VkPhysicalDevice phys_dev;
     VkDevice dev;
     
     struct {
-        struct {
-            VkDeviceMemory mem;
-            u64 size;
-            u64 used;
-        } allocs[GPU_ALLOC_CNT];
-        
-        struct gpu_img {
-            VkImage img;
-            VkImageView view;
-        } imgs[CHT_SZ];
-        
-        VkBuffer bufs[GPU_BUF_CNT];
-    } mem;
+        VkDeviceMemory handle;
+        u32 type;
+    } mem[GPU_MEM_CNT];
+    
+    struct {
+        VkBuffer handle;
+        u64 size;
+        u64 used;
+    } bufs[GPU_BUF_CNT];
+    
+    struct gpu_glyph glyphs[CHT_SZ];
+    
+    u32 flags;
     
     struct { u32 g,t,p; } qi; // queue indices
     struct { VkQueue g,t,p; } qh; // queue handles
