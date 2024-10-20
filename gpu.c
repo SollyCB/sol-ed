@@ -9,13 +9,28 @@
 
 struct gpu *gpu;
 
+struct cell {
+    u16 pd[3]; // x and y are offsets from the top left corner of the screen in pixels, z is scale
+    u8 fg[3];
+    u8 bg[3];
+};
+#define CELL_PD_FMT VK_FORMAT_R16G16B16_UINT
+#define CELL_FG_FMT VK_FORMAT_R8G8B8_UNORM
+#define CELL_BG_FMT VK_FORMAT_R8G8B8_UNORM
+
+// Character cells are defined by a 3 component u16 vector, where x and y are offsets in pixels
+// of the top left corner of the cell from the top left corner of the screen, and z is a scale.
+// The size of the screen is passed in as a push constant to allow conversion to screen coords.
+#define CELL_BYTE_WIDTH (sizeof(u16) * 3)
+#define CELL_COLOR
+
 #define GPU_VB_SZ mb(64) /* Both arbitrary, need to be able to contain 2 frames of data */
 #define GPU_TB_SZ mb(64)
 
 extern char* gpu_mem_names[GPU_MEM_CNT] = {
-    [GPU_MEM_V] = "Vertex",
-    [GPU_MEM_T] = "Transfer",
-    [GPU_MEM_I] = "Image",
+    [GPU_MI_V] = "Vertex",
+    [GPU_MI_T] = "Transfer",
+    [GPU_MI_I] = "Image",
 };
 
 union gpu_memreq_info {
@@ -26,7 +41,7 @@ union gpu_memreq_info {
 internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequirements *mr)
 {
     switch(i) {
-        case GPU_MEM_I: {
+        case GPU_MI_I: {
             VkImage img;
             if (vk_create_img(info.img, &img))
                 break;
@@ -34,8 +49,8 @@ internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequir
             vk_destroy_img(img);
         } return 0;
         
-        case GPU_MEM_V:
-        case GPU_MEM_T: {
+        case GPU_MI_V:
+        case GPU_MI_T: {
             VkBuffer buf;
             if (vk_create_buf(info.buf, &buf))
                 break;
@@ -49,7 +64,7 @@ internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequir
     return -1;
 }
 
-internal u32 gpu_mem_type(u32 req)
+internal u32 gpu_memtype_helper(u32 req)
 {
     // Ensure that a memory type requiring device features cannot be chosen.
     u32 mem_mask = Max_u32 << (ctz(VK_MEMORY_PROPERTY_PROTECTED_BIT) + 1);
@@ -58,10 +73,10 @@ internal u32 gpu_mem_type(u32 req)
     u32 type = Max_u32;
     u32 cnt,tz;
     for_bits(tz, cnt, req) {
-        if(gpu->memprops.memoryTypes[tz].propertyFlags & mem_mask)
+        if(gpu->memprops.memoryTypes[tz].propertyFlags & mem_mask) {
             continue;
-        if ((gpu->memprops.memoryTypes[tz].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
-            (gpu->memprops.memoryHeaps[gpu->memprops.memoryTypes[tz].heapIndex].size > max_heap))
+        } else if ((gpu->memprops.memoryTypes[tz].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                   (gpu->memprops.memoryHeaps[gpu->memprops.memoryTypes[tz].heapIndex].size > max_heap))
         {
             type = tz;
             max_heap = gpu->memprops.memoryHeaps[gpu->memprops.memoryTypes[tz].heapIndex].size;
@@ -86,12 +101,12 @@ internal int gpu_create_mem(void)
     };
     
     local_persist VkBufferCreateInfo bci[GPU_BUF_CNT] = {
-        [GPU_BUF_V] = {
+        [GPU_BI_V] = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = 1,
             .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         },
-        [GPU_BUF_T] = {
+        [GPU_BI_T] = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = 1,
             .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -105,9 +120,9 @@ internal int gpu_create_mem(void)
         vk_get_phys_dev_memprops(gpu->phys_dev, &gpu->memprops);
         
         union gpu_memreq_info mr_infos[GPU_MEM_CNT] = {
-            [GPU_MEM_V] = {.buf = &bci[GPU_BUF_V]},
-            [GPU_MEM_T] = {.buf = &bci[GPU_BUF_T]},
-            [GPU_MEM_I] = {.img = &ici},
+            [GPU_MI_V] = {.buf = &bci[GPU_BI_V]},
+            [GPU_MI_T] = {.buf = &bci[GPU_BI_T]},
+            [GPU_MI_I] = {.img = &ici},
         };
         
         VkMemoryRequirements mr[GPU_MEM_CNT];
@@ -121,57 +136,120 @@ internal int gpu_create_mem(void)
         
         // Only update state when nothing can fail
         for(u32 i=0; i < GPU_MEM_CNT; ++i)
-            gpu->mem[i].type = mr[i].memoryTypeBits;
+            gpu->mem[i].type = gpu_memtype_helper(mr[i].memoryTypeBits);
+        if (gpu->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+            gpu->flags |= GPU_MEM_UNI;
         gpu->flags |= GPU_MEM_INI;
     }
     
-#if 0
-    u32 i;
-    int res = 0;
-    u64 sz = read_file(FONT_URI, NULL, 0);
-    u8 *data = salloc(MT, sz);
-    read_file(FONT_URI, data, sz);
-    
-    stbtt_fontinfo font;
-    stbtt_InitFont(&font, data, stbtt_GetFontOffsetForIndex(data, 0));
-    
     u8 *bm[CHT_SZ];
-    struct gpu_glyph g[CHT_SZ];
-    VkMemoryRequirements mr[CHT_SZ];
-    
-    u64 img_sz = 0;
-    
-    int max_w = 0;
-    int max_h = 0;
-    for(i=0; i < cl_array_size(bm); ++i) {
-        int w,h;
-        bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
-                                         cht[i], &w, &h, NULL, NULL);
-        if (max_w < w) max_w = w;
-        if (max_h < h) max_h = h;
+    { // Glyphs
+        u64 sz = read_file(FONT_URI, NULL, 0);
+        u8 *data = salloc(MT, sz);
+        read_file(FONT_URI, data, sz);
         
-        ici.extent = {.width = w, .height = h, .depth = 1};
+        stbtt_fontinfo font;
+        stbtt_InitFont(&font, data, stbtt_GetFontOffsetForIndex(data, 0));
         
-        VkImage img = VK_NULL_HANDLE;
-        if (vk_create_img(&ici, &g[i].img)) {
-            res = -1;
-            goto out;
+        struct gpu_glyph g[CHT_SZ];
+        VkMemoryRequirements mr[CHT_SZ];
+        
+        u32 img_sz = 0;
+        
+        int max_w = 0;
+        int max_h = 0;
+        for(u32 i=0; i < cl_array_size(bm); ++i) {
+            int w=0,h=0;
+            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
+                                             cht[i], &g[i].w, &g[i].h, &g[i].x, &g[i].y);
+            if (max_w < w) max_w = w;
+            if (max_h < h) max_h = h;
+            
+            ici.extent = (VkExtent3D) {.width = w, .height = h, .depth = 1};
+            
+            if (vk_create_img(&ici, &g[i].img)) {
+                if (bm[i])
+                    stbtt_FreeBitmap(bm[i], NULL);
+                while(--i < Max_u32) {
+                    vk_destroy_img(g[i].img);
+                    g[i].img = VK_NULL_HANDLE;
+                    stbtt_FreeBitmap(bm[i], NULL);
+                }
+                return -1;
+            }
+            
+            vk_get_img_memreq(g[i].img, &mr[i]);
+            img_sz = (u32)(align(img_sz, mr[i].alignment) + mr[i].size);
         }
         
-        vk_get_memreq_i(g[i].img, &mr[i]);
-        img_sz = align(img_sz, mr[i].alignment) + mr[i].size;
-    }
-    
-    if (gpu->mem.allocs[GPU_ALLOC_I].size < img_sz) {
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = img_sz;
+        ai.memoryTypeIndex = gpu->mem[GPU_MI_I].type;
         
+        bool ok = true;
+        bool free_mem = (vk_alloc_mem(&ai, &mem) == VK_SUCCESS);
+        if (!free_mem) {
+            log_error("Failed to allocate glyph memory, size %u", img_sz);
+            ok = false;
+            goto img_end;
+        }
+        
+        u32 ofs = 0;
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            ofs = (u32)align(ofs, mr[i].alignment);
+            if (vk_bind_img_mem(g[i].img, mem, ofs)) {
+                log_error("Failed to bind memory to image %u", i);
+                ok = false;
+                goto img_end;
+            }
+            ofs += (u32)mr[i].size;
+        }
+        
+        local_persist VkImageViewCreateInfo vci = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = VK_FORMAT_R8_UNORM,
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,.levelCount = 1,.layerCount = 1,},
+        };
+        
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            vci.image = g[i].img;
+            if (vk_create_imgv(&vci, &g[i].view)) {
+                log_error("Failed to create view for image %u", i);
+                ok = false;
+                while(--i < Max_u32)
+                    vk_destroy_imgv(g[i].view);
+                goto img_end;
+            }
+        }
+        
+        memcpy(gpu->glyphs, g, sizeof(g));
+        gpu->flags |= GPU_MEM_IMG;
+        
+        img_end:
+        if (!ok) {
+            for(u32 i=0; i < CHT_SZ; ++i) {
+                vk_destroy_img(g[i].img);
+                stbtt_FreeBitmap(bm[i], NULL);
+            }
+            
+            if (free_mem)
+                vk_free_mem(mem);
+            
+            return -1;
+        }
     }
     
-    out:
-    while(--i < Max_u32) {
-        stbtt_FreeBitmap(bm[i], NULL);
-        vk_destroy_img(imgs[i]);
-    }
+#if 0
+    // @Todo Probably will need to add padding between characters, or maybe the font includes it?
+    // @Todo There will be other things to draw besides characters (the window borders, cursor)
+    u32 cell_cnt = (win->dim.w / max_w + 1) * (win->dim.h / max_h + 1);
+    u32 vert_sz = sizeof(struct cell) * cell_cnt;
 #endif
+    
+    for(u32 i=0; i < CHT_SZ; ++i)
+        stbtt_FreeBitmap(bm[i], NULL);
     
     return 0;
 }

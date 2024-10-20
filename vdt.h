@@ -27,6 +27,10 @@ enum {
     VDT_DestroyImage,
     VDT_GetBufferMemoryRequirements,
     VDT_GetImageMemoryRequirements,
+    VDT_AllocateMemory,
+    VDT_FreeMemory,
+    VDT_BindBufferMemory,
+    VDT_BindImageMemory,
     VDT_CreateImageView,
     VDT_DestroyImageView,
     VDT_CreateShaderModule,
@@ -157,6 +161,22 @@ static inline void vk_get_buf_memreq(VkBuffer buf, VkMemoryRequirements *mr) {
 
 static inline void vk_get_img_memreq(VkImage img, VkMemoryRequirements *mr) {
     vdt_call(GetImageMemoryRequirements)(gpu->dev, img, GAC);
+}
+
+static inline VkResult vk_alloc_mem(VkMemoryAllocateInfo *ci, VkDeviceMemory *mem) {
+    return cvk(vdt_call(AllocateMemory)(gpu->dev, ci, GAC, mem));
+}
+
+static inline void vk_free_mem(VkDeviceMemory mem) {
+    vdt_call(FreeMemory)(gpu->dev, mem, GAC);
+}
+
+static inline VkResult vk_bind_img_mem(VkImage img, VkDeviceMemory mem, u64 ofs) {
+    return cvk(vdt_call(BindImageMemory)(gpu->dev, img, mem, ofs));
+}
+
+static inline VkResult vk_bind_buf_mem(VkBuffer buf, VkDeviceMemory mem, u64 ofs) {
+    return cvk(vdt_call(BindBufferMemory)(gpu->dev, buf, mem, ofs));
 }
 
 static inline VkResult vk_create_imgv(VkImageViewCreateInfo *ci, VkImageView *view) {

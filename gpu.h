@@ -10,23 +10,26 @@
 #define SC_MIN_IMGS 2
 
 enum gpu_mem_indices {
-    GPU_MEM_V,
-    GPU_MEM_T,
-    GPU_MEM_I,
+    GPU_MI_V,
+    GPU_MI_T,
+    GPU_MI_I,
     GPU_MEM_CNT,
 };
 
 enum gpu_buf_indices {
-    GPU_BUF_V,
-    GPU_BUF_T,
+    GPU_BI_V,
+    GPU_BI_T,
     GPU_BUF_CNT,
 };
 
 enum gpu_flags {
     GPU_MEM_INI = 0x01, // mem.type is valid
     GPU_MEM_UNI = 0x02, // mem arch is unified
+    GPU_MEM_IMG = 0x04, // glyphs are valid
+    GPU_MEM_VRT = 0x08, // vertex buffer is valid
+    GPU_MEM_TRN = 0x10, // transfer buffer is valid
     
-    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI,
+    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI|GPU_MEM_IMG|GPU_MEM_VRT|GPU_MEM_TRN,
 };
 
 struct gpu_glyph {
@@ -50,6 +53,7 @@ struct gpu {
     
     struct {
         VkBuffer handle;
+        void *data;
         u64 size;
         u64 used;
     } bufs[GPU_BUF_CNT];
