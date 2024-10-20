@@ -25,11 +25,8 @@ enum gpu_buf_indices {
 enum gpu_flags {
     GPU_MEM_INI = 0x01, // mem.type is valid
     GPU_MEM_UNI = 0x02, // mem arch is unified
-    GPU_MEM_IMG = 0x04, // glyphs are valid
-    GPU_MEM_VRT = 0x08, // vertex buffer is valid
-    GPU_MEM_TRN = 0x10, // transfer buffer is valid
     
-    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI|GPU_MEM_IMG|GPU_MEM_VRT|GPU_MEM_TRN,
+    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI,
 };
 
 struct gpu_glyph {
@@ -56,7 +53,7 @@ struct gpu {
         void *data;
         u64 size;
         u64 used;
-    } bufs[GPU_BUF_CNT];
+    } buf[GPU_BUF_CNT];
     
     struct gpu_glyph glyphs[CHT_SZ];
     
