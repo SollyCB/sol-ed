@@ -52,10 +52,12 @@ enum {
     VDT_DestroyPipeline,
     
     VDT_CreateCommandPool,
+    VDT_DestroyCommandPool,
     VDT_AllocateCommandBuffers,
     VDT_BeginCommandBuffer,
     VDT_EndCommandBuffer,
     VDT_ResetCommandPool,
+    VDT_FreeCommandBuffers,
     VDT_CmdPipelineBarrier2,
     VDT_CmdCopyBufferToImage,
     
@@ -78,6 +80,7 @@ struct vdt {
 
 #ifdef EXE
 extern struct vdt_elem exevdt[VDT_SIZE];
+
 #else
 extern struct vdt *vdt;
 
@@ -266,8 +269,15 @@ static inline VkResult vk_create_cmdpool(VkCommandPoolCreateInfo *ci, VkCommandP
     return cvk(vdt_call(CreateCommandPool)(gpu->dev, ci, GAC, pool));
 }
 
-static inline VkResult vk_alloc_cmds(VkCommandBufferAllocateInfo *ai, VkCommandBuffer *cmds) {
-    return cvk(vdt_call(AllocateCommandBuffers)(gpu->dev, ai, cmds));
+static inline void vk_destroy_cmdpool(VkCommandPool pool) {
+    vdt_call(DestroyCommandPool)(gpu->dev, pool, GAC);
+}
+
+static inline VkResult vk_alloc_cmds(u32 ci, u32 cnt) {
+    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = gpu_cmd(ci).pool;
+    ai.commandBufferCount = cnt;
+    return cvk(vdt_call(AllocateCommandBuffers)(gpu->dev, &ai, gpu_cmd(ci).bufs + gpu_cmd(ci).buf_cnt));
 }
 
 static inline void vk_begin_cmd(VkCommandBuffer cmd, bool one_time) {
@@ -292,6 +302,10 @@ static inline void vk_reset_cmdpool(VkCommandPool pool, bool release_resources) 
     vdt_call(ResetCommandPool)(gpu->dev, pool, release_resources);
 }
 
+static inline void vk_free_cmds(u32 ci) {
+    vdt_call(FreeCommandBuffers)(gpu->dev, gpu_cmd(ci).pool, gpu_cmd(ci).buf_cnt, gpu_cmd(ci).bufs);
+}
+
 static inline void vk_cmd_pl_barr(VkCommandBuffer cmd, VkDependencyInfo *dep) {
     vdt_call(CmdPipelineBarrier2)(cmd, dep);
 }
@@ -300,7 +314,7 @@ static inline void vk_cmd_copy_buf_to_img(VkCommandBuffer cmd, VkBuffer buf, VkI
     VkBufferImageCopy r = {
         .bufferOffset = ofs,
         .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,.layerCount = 1},
-        .imageExtent = {.width = w, .height = h},
+        .imageExtent = {.width = w, .height = h, .depth = 1},
     };
     vdt_call(CmdCopyBufferToImage)(cmd, buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
 }

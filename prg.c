@@ -1,4 +1,5 @@
 #include "prg.h"
+#include "gpu.h"
 
 struct program *prg;
 
@@ -142,7 +143,7 @@ def_prg_update(prg_update)
             continue;
         } else if (ki.key == KEY_ESCAPE) {
             win->flags |= WIN_CLO;
-            //vkDestroyDevice(gpu->dev, NULL); // check if objects are being leaked
+            gpu_check_leaks();
         } else if (c > 0) {
             println("Got input %c", c);
         } else {

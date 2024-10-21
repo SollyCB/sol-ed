@@ -9,8 +9,8 @@
 #include "defs.h"
 
 #define LIB
+#include "prg.c"
 #include "chars.c"
 #include "win.c"
 #include "gpu.c"
 #include "vdt.c"
-#include "prg.c"

@@ -2,60 +2,11 @@
 
 #include "prg.h"
 #include "win.h"
-#include "vdt.h"
 #include "gpu.h"
 #include "shader.h"
 #include "chars.h"
 
 struct gpu *gpu;
-
-enum gpu_cmd_opt {
-    GPU_CMD_OT = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-};
-
-// represents queues that can be submitted to
-enum gpu_cmdq_indices {
-    GPU_CI_G,
-    GPU_CI_T,
-    GPU_CMDQ_CNT
-};
-
-// map queues that can be submitted to to regular queue index
-internal u32 gpu_cmdq_to_q[] = {
-    [GPU_CI_G] = GPU_Q_G,
-    [GPU_CI_T] = GPU_Q_T,
-};
-
-internal char *gpu_cmdq_names[] = {
-    [GPU_CI_G] = "Graphics",
-    [GPU_CI_T] = "Transfer",
-};
-
-internal u32 gpu_bi_to_mi[GPU_BUF_CNT] = {
-    [GPU_BI_G] = GPU_MI_G,
-    [GPU_BI_T] = GPU_MI_T,
-};
-
-internal char* gpu_mem_names[GPU_MEM_CNT] = {
-    [GPU_MI_G] = "Vertex",
-    [GPU_MI_T] = "Transfer",
-    [GPU_MI_I] = "Image",
-};
-
-union gpu_memreq_info {
-    VkBufferCreateInfo *buf;
-    VkImageCreateInfo *img;
-};
-
-struct cell {
-    u16 pd[3]; // x and y are offsets from the top left corner of the screen in pixels, z is scale
-    u8 fg[3]; // rgb color
-    u8 bg[3]; // rgb color
-};
-#define CELL_PD_FMT VK_FORMAT_R16G16B16_UINT
-#define CELL_FG_FMT VK_FORMAT_R8G8B8_UNORM
-#define CELL_BG_FMT VK_FORMAT_R8G8B8_UNORM
-#define CELL_CH_FMT VK_FORMAT_R8_UNORM
 
 internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequirements *mr)
 {
@@ -103,6 +54,30 @@ internal u32 gpu_memtype_helper(u32 type_bits, u32 req)
     }
     
     return ret;
+}
+
+internal u32 gpu_alloc_cmds(u32 ci, u32 cnt)
+{
+    if (cnt == 0) return Max_u32;
+    
+    if (GPU_MAX_CMDS < gpu_cmd(ci).buf_cnt + cnt) {
+        log_error("Command buffer allocation overflow for queue %u (%s)", ci, gpu_cmd_name(ci));
+        return Max_u32;
+    }
+    
+    if (vk_alloc_cmds(ci, cnt))
+        return Max_u32;
+    
+    gpu_cmd(ci).buf_cnt += cnt;
+    return gpu_cmd(ci).buf_cnt - cnt;
+}
+
+internal void gpu_dealloc_cmds(u32 ci)
+{
+    if (gpu_cmd(ci).buf_cnt == 0)
+        return;
+    vk_free_cmds(ci);
+    gpu_cmd(ci).buf_cnt = 0;
 }
 
 internal int gpu_create_mem(void)
@@ -162,27 +137,30 @@ internal int gpu_create_mem(void)
         if (gpu->flags & GPU_MEM_UNI)
             req_type_bits[GPU_MI_G] |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         
-        if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
+        if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
             VkCommandPoolCreateInfo ci[GPU_CMDQ_CNT] = {
-                [GPU_Q_G] = {
+                [GPU_QI_G] = {
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                     .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                    .queueFamilyIndex = gpu->q[GPU_Q_G].i,
+                    .queueFamilyIndex = gpu->q[GPU_QI_G].i,
                 },
-                [GPU_Q_T] = {
+                [GPU_QI_T] = {
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                     .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                    .queueFamilyIndex = gpu->q[GPU_Q_T].i,
+                    .queueFamilyIndex = gpu->q[GPU_QI_T].i,
                 },
             };
             for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
-                if (vk_create_cmdpool(&ci[i], &gpu->q[gpu_cmdq_to_q[i]].pool))
+                if (vk_create_cmdpool(&ci[i], &gpu_cmd(i).pool))
                     return -1;
             }
         } else {
             VkCommandPoolCreateInfo ci = {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                 .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                .queueFamilyIndex = gpu->q[GPU_Q_G].i,
+                .queueFamilyIndex = gpu->q[GPU_QI_G].i,
             };
-            if (vk_create_cmdpool(&ci, &gpu->q[gpu_cmdq_to_q[GPU_CI_G]].pool))
+            if (vk_create_cmdpool(&ci, &gpu_cmd(GPU_CI_G).pool))
                 return -1;
         }
         
@@ -195,30 +173,28 @@ internal int gpu_create_mem(void)
     }
     
     VkCommandBuffer cmd[GPU_CMDQ_CNT];
-    if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
-        VkCommandBufferAllocateInfo ai = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
+    if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
         for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
-            ai.commandPool = gpu->q[gpu_cmdq_to_q[i]].pool;
-            if (vk_alloc_cmds(&ai, &cmd[i])) {
-                log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", i, gpu_cmdq_names[i]);
+            vk_reset_cmdpool(gpu_cmd(i).pool, GPU_CMD_RE);
+            gpu_dealloc_cmds(i);
+        }
+        for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
+            u32 ci = gpu_alloc_cmds(i, 1); 
+            if (ci == Max_u32) {
+                log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", i, gpu_cmd_name(i));
                 return -1;
             }
+            cmd[i] = gpu_cmd(i).bufs[ci];
         }
     } else {
-        VkCommandBufferAllocateInfo ai = {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandPool = gpu->q[gpu_cmdq_to_q[GPU_CI_G]].pool,
-            .commandBufferCount = 1,
-        };
-        if (vk_alloc_cmds(&ai, &cmd[GPU_CI_G])) {
-            log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", GPU_CI_G, gpu_cmdq_names[GPU_CI_G]);
+        vk_reset_cmdpool(gpu_cmd(GPU_CI_G).pool, GPU_CMD_RE);
+        gpu_dealloc_cmds(GPU_CI_G);
+        u32 ci = gpu_alloc_cmds(GPU_QI_G, 1);
+        if (ci == Max_u32) {
+            log_error("Failed to allocate command buffer for uploading glyphs (%s)", gpu_cmd_name(GPU_CI_G));
             return -1;
         }
+        cmd[GPU_CI_G] = gpu_cmd(GPU_CI_G).bufs[ci];
     }
     
     u32 max_w = 0;
@@ -241,17 +217,16 @@ internal int gpu_create_mem(void)
         VkMemoryRequirements mr[CHT_SZ];
         
         for(u32 i=0; i < cl_array_size(bm); ++i) {
-            u32 w=0,h=0;
             bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
                                              cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &g[i].x, &g[i].y);
             
             
             bm_sz[i] = bm_dim[i].w * bm_dim[i].h;
             bm_tot += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
-            if (max_w < w) max_w = w;
-            if (max_h < h) max_h = h;
+            if (max_w < bm_dim[i].w) max_w = bm_dim[i].w;
+            if (max_h < bm_dim[i].h) max_h = bm_dim[i].h;
             
-            ici.extent = (VkExtent3D) {.width = w, .height = h, .depth = 1};
+            ici.extent = (VkExtent3D) {.width = bm_dim[i].w, .height = bm_dim[i].h, .depth = 1};
             
             if (vk_create_img(&ici, &g[i].img)) {
                 if (bm[i])
@@ -308,7 +283,7 @@ internal int gpu_create_mem(void)
     // @Todo Probably will need to add padding between characters, or maybe the font includes it?
     // @Todo There will be other things to draw besides characters (the window borders, cursor)
     u32 cell_cnt = (win->dim.w / max_w + 1) * (win->dim.h / max_h + 1);
-    u32 vert_sz = sizeof(struct cell) * cell_cnt;
+    u32 vert_sz = sizeof(struct gpu_cell_data) * cell_cnt;
     
     if (vert_sz < bm_tot || (gpu->flags & GPU_MEM_UNI))
         bci[GPU_BI_T].size = bm_tot;
@@ -375,6 +350,11 @@ internal int gpu_create_mem(void)
     //     - destroy the old objects
     //     - upload the glyph data to the gpu
     
+    for(u32 i=0; i < GPU_MEM_CNT; ++i) {
+        if (gpu->mem[i].handle) vk_free_mem(gpu->mem[i].handle);
+        gpu->mem[i].handle = mem[i];
+    }
+    
     for(u32 i=0; i < CHT_SZ; ++i) {
         log_error_if((gpu->glyphs[i].img && !gpu->glyphs[i].view) ||
                      (!gpu->glyphs[i].img && gpu->glyphs[i].view),
@@ -385,8 +365,8 @@ internal int gpu_create_mem(void)
             vk_destroy_imgv(gpu->glyphs[i].view);
     }
     memcpy(gpu->glyphs, g, sizeof(g));
-    gpu->cell.dim.w = max_w;
-    gpu->cell.dim.h = max_h;
+    gpu->cell_dim.w = max_w;
+    gpu->cell_dim.h = max_h;
     
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if (gpu->buf[i].handle)
@@ -400,7 +380,7 @@ internal int gpu_create_mem(void)
     if (gpu->flags & GPU_MEM_UNI)
         gpu->buf[GPU_BI_G].data = buf_map[GPU_BI_G];
     
-    if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
+    if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
         enum {UT,TG,STAGE_CNT};
         VkImageMemoryBarrier2 b[STAGE_CNT][CHT_SZ] = {
             [UT][0] = {
@@ -420,8 +400,8 @@ internal int gpu_create_mem(void)
                 .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = gpu->q[GPU_Q_T].i,
-                .dstQueueFamilyIndex = gpu->q[GPU_Q_G].i,
+                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
                 .image = gpu->glyphs[0].img,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
             },
@@ -472,8 +452,8 @@ internal int gpu_create_mem(void)
                 .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = gpu->q[GPU_Q_T].i,
-                .dstQueueFamilyIndex = gpu->q[GPU_Q_G].i,
+                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
                 .image = gpu->glyphs[0].img,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
             }
@@ -509,6 +489,8 @@ internal int gpu_create_mem(void)
     if (gpu->flags & GPU_MEM_UNI) {
         vk_free_mem(gpu->mem[GPU_BI_T].handle);
         vk_destroy_buf(gpu->buf[GPU_BI_T].handle);
+        gpu->mem[GPU_BI_T].handle = VK_NULL_HANDLE;
+        gpu->buf[GPU_BI_T].handle = VK_NULL_HANDLE;
     }
     for(u32 i=0; i < CHT_SZ; ++i)
         stbtt_FreeBitmap(bm[i], NULL);
@@ -553,6 +535,7 @@ internal int gpu_create_sc(void)
         strcpy(CLSTR(msg), STR("failed to create swapchain object (TODO I cannot tell if I am handling this correctly, the spec is odd when creation fails but oldSwapchain was a valid handle...)"));
         goto fail_sc;
     }
+    vk_destroy_sc_khr(gpu->sc.info.oldSwapchain);
     
     VkImage imgs[SC_MAX_IMGS] = {};
     if (vk_get_sc_imgs_khr(&gpu->sc.img_cnt, imgs)) {
@@ -954,31 +937,31 @@ def_create_gpu(create_gpu)
         for(u32 i=0; i < cnt; ++i) {
             b32 surf;
             vk_get_phys_dev_surf_support_khr(i, &surf);
-            if (surf && qi[GPU_Q_P] == Max_u32) {
-                qi[GPU_Q_P] = i;
+            if (surf && qi[GPU_QI_P] == Max_u32) {
+                qi[GPU_QI_P] = i;
             }
             if ((fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
                 (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                qi[GPU_Q_G] == Max_u32)
+                qi[GPU_QI_G] == Max_u32)
             {
-                qi[GPU_Q_G] = i;
+                qi[GPU_QI_G] = i;
             }
             if ((fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
                 !(fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                qi[GPU_Q_T] == Max_u32)
+                qi[GPU_QI_T] == Max_u32)
             {
-                qi[GPU_Q_T] = i;
+                qi[GPU_QI_T] = i;
             }
         }
         
-        if (qi[GPU_Q_T] == Max_u32)
-            qi[GPU_Q_T] = qi[GPU_Q_G];
+        if (qi[GPU_QI_T] == Max_u32)
+            qi[GPU_QI_T] = qi[GPU_QI_G];
         
-        if (qi[GPU_Q_G] == Max_u32 || qi[GPU_Q_P] == Max_u32) {
-            log_error_if(qi[GPU_Q_G] == Max_u32,
+        if (qi[GPU_QI_G] == Max_u32 || qi[GPU_QI_P] == Max_u32) {
+            log_error_if(qi[GPU_QI_G] == Max_u32,
                          "physical device %s does not support graphics operations",
                          gpu->props.deviceName);
-            log_error_if(qi[GPU_Q_P] == Max_u32,
+            log_error_if(qi[GPU_QI_P] == Max_u32,
                          "physical device %s does not support present operations",
                          gpu->props.deviceName);
             return -1;
@@ -1010,7 +993,13 @@ def_create_gpu(create_gpu)
             "VK_KHR_swapchain",
         };
         
+        VkPhysicalDeviceVulkan13Features feat13 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+            .synchronization2 = VK_TRUE,
+        };
+        
         VkDeviceCreateInfo ci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+        ci.pNext = &feat13;
         ci.queueCreateInfoCount = qc;
         ci.pQueueCreateInfos = qci;
         ci.enabledExtensionCount = cl_array_size(ext_names);
@@ -1077,7 +1066,7 @@ def_create_gpu(create_gpu)
         gpu->sc.info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         gpu->sc.info.clipped = VK_TRUE;
         gpu->sc.info.queueFamilyIndexCount = 1;
-        gpu->sc.info.pQueueFamilyIndices = &gpu->q[GPU_Q_P].i;
+        gpu->sc.info.pQueueFamilyIndices = &gpu->q[GPU_QI_P].i;
         gpu->sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         
         if (gpu_create_sc())
@@ -1209,8 +1198,51 @@ def_gpu_handle_win_resize(gpu_handle_win_resize)
         }
     }
     if (gpu_create_fb()) {
-        log_error("Failed to create framebuffer");
+        log_error("Failed to create framebuffer on window resize");
+        return -1;
+    }
+    if (gpu_create_mem()) {
+        log_error("Failed to create memory objects on window resize");
         return -1;
     }
     return 0;
+}
+
+def_gpu_check_leaks(gpu_check_leaks)
+{
+    // @NOTE I am not necessarily trying to destroy everything,
+    // just enough that the validation messages are parseable.
+    
+    for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
+        gpu_dealloc_cmds(i);
+        vk_destroy_cmdpool(gpu_cmd(i).pool);
+    }
+    
+    for(u32 i=0; i < CHT_SZ; ++i) {
+        vk_destroy_img(gpu->glyphs[i].img);
+        vk_destroy_imgv(gpu->glyphs[i].view);
+    }
+    for(u32 i=0; i < GPU_BUF_CNT; ++i) {
+        if (gpu->buf[i].handle)
+            vk_destroy_buf(gpu->buf[i].handle);
+    }
+    for(u32 i=0; i < GPU_MEM_CNT; ++i)
+        vk_free_mem(gpu->mem[i].handle);
+    
+    vk_destroy_shmod(gpu->sh.vert);
+    vk_destroy_shmod(gpu->sh.frag);
+    vk_destroy_pll(gpu->pll);
+    vk_destroy_pl(gpu->pl);
+    vk_destroy_rp(gpu->rp);
+    for(u32 i=0; i < gpu->sc.img_cnt; ++i)
+        vk_destroy_fb(gpu->fb[i]);
+    
+    vk_destroy_dsl(gpu->dsl);
+    vk_destroy_dp(gpu->dp);
+    
+    for(u32 i=0; i < gpu->sc.img_cnt; ++i)
+        vk_destroy_imgv(gpu->sc.views[i]);
+    vk_destroy_sc_khr(gpu->sc.info.oldSwapchain);
+    
+    vkDestroyDevice(gpu->dev, NULL);
 }

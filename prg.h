@@ -80,7 +80,6 @@ extern struct program *prg;
 
 #define salloc(ti, sz) allocate(&prg->allocs[ti].scratch, sz)
 #define palloc(ti, sz) allocate(&prg->allocs[ti].persist, sz)
-
 #endif
 
 #endif // PRG_H
