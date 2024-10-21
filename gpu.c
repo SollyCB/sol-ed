@@ -9,32 +9,35 @@
 
 struct gpu *gpu;
 
-struct cell {
-    u16 pd[3]; // x and y are offsets from the top left corner of the screen in pixels, z is scale
-    u8 fg[3];
-    u8 bg[3];
+enum gpu_cmd_opt {
+    GPU_CMD_OT = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 };
-#define CELL_PD_FMT VK_FORMAT_R16G16B16_UINT
-#define CELL_FG_FMT VK_FORMAT_R8G8B8_UNORM
-#define CELL_BG_FMT VK_FORMAT_R8G8B8_UNORM
-#define CELL_CH_FMT VK_FORMAT_R8_UNORM
 
-// Character cells are defined by a 3 component u16 vector, where x and y are offsets in pixels
-// of the top left corner of the cell from the top left corner of the screen, and z is a scale.
-// The size of the screen is passed in as a push constant to allow conversion to screen coords.
-#define CELL_BYTE_WIDTH (sizeof(u16) * 3)
-#define CELL_COLOR
+// represents queues that can be submitted to
+enum gpu_cmdq_indices {
+    GPU_CI_G,
+    GPU_CI_T,
+    GPU_CMDQ_CNT
+};
 
-#define GPU_VB_SZ mb(64) /* Both arbitrary, need to be able to contain 2 frames of data */
-#define GPU_TB_SZ mb(64)
+// map queues that can be submitted to to regular queue index
+internal u32 gpu_cmdq_to_q[] = {
+    [GPU_CI_G] = GPU_Q_G,
+    [GPU_CI_T] = GPU_Q_T,
+};
+
+internal char *gpu_cmdq_names[] = {
+    [GPU_CI_G] = "Graphics",
+    [GPU_CI_T] = "Transfer",
+};
 
 internal u32 gpu_bi_to_mi[GPU_BUF_CNT] = {
-    [GPU_BI_V] = GPU_MI_V,
+    [GPU_BI_G] = GPU_MI_G,
     [GPU_BI_T] = GPU_MI_T,
 };
 
 internal char* gpu_mem_names[GPU_MEM_CNT] = {
-    [GPU_MI_V] = "Vertex",
+    [GPU_MI_G] = "Vertex",
     [GPU_MI_T] = "Transfer",
     [GPU_MI_I] = "Image",
 };
@@ -43,6 +46,16 @@ union gpu_memreq_info {
     VkBufferCreateInfo *buf;
     VkImageCreateInfo *img;
 };
+
+struct cell {
+    u16 pd[3]; // x and y are offsets from the top left corner of the screen in pixels, z is scale
+    u8 fg[3]; // rgb color
+    u8 bg[3]; // rgb color
+};
+#define CELL_PD_FMT VK_FORMAT_R16G16B16_UINT
+#define CELL_FG_FMT VK_FORMAT_R8G8B8_UNORM
+#define CELL_BG_FMT VK_FORMAT_R8G8B8_UNORM
+#define CELL_CH_FMT VK_FORMAT_R8_UNORM
 
 internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequirements *mr)
 {
@@ -55,7 +68,7 @@ internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequir
             vk_destroy_img(img);
         } return 0;
         
-        case GPU_MI_V:
+        case GPU_MI_G:
         case GPU_MI_T: {
             VkBuffer buf;
             if (vk_create_buf(info.buf, &buf))
@@ -107,7 +120,7 @@ internal int gpu_create_mem(void)
     };
     
     local_persist VkBufferCreateInfo bci[GPU_BUF_CNT] = {
-        [GPU_BI_V] = {
+        [GPU_BI_G] = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = 1,
             .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -126,7 +139,7 @@ internal int gpu_create_mem(void)
         vk_get_phys_dev_memprops(gpu->phys_dev, &gpu->memprops);
         
         union gpu_memreq_info mr_infos[GPU_MEM_CNT] = {
-            [GPU_MI_V] = {.buf = &bci[GPU_BI_V]},
+            [GPU_MI_G] = {.buf = &bci[GPU_BI_G]},
             [GPU_MI_T] = {.buf = &bci[GPU_BI_T]},
             [GPU_MI_I] = {.img = &ici},
         };
@@ -142,12 +155,36 @@ internal int gpu_create_mem(void)
         
         u32 req_type_bits[GPU_MEM_CNT] = {
             [GPU_MI_I] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            [GPU_MI_V] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            [GPU_MI_G] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             [GPU_MI_T] = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         };
         
         if (gpu->flags & GPU_MEM_UNI)
-            req_type_bits[GPU_MI_V] |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            req_type_bits[GPU_MI_G] |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        
+        if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
+            VkCommandPoolCreateInfo ci[GPU_CMDQ_CNT] = {
+                [GPU_Q_G] = {
+                    .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                    .queueFamilyIndex = gpu->q[GPU_Q_G].i,
+                },
+                [GPU_Q_T] = {
+                    .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                    .queueFamilyIndex = gpu->q[GPU_Q_T].i,
+                },
+            };
+            for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
+                if (vk_create_cmdpool(&ci[i], &gpu->q[gpu_cmdq_to_q[i]].pool))
+                    return -1;
+            }
+        } else {
+            VkCommandPoolCreateInfo ci = {
+                .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                .queueFamilyIndex = gpu->q[GPU_Q_G].i,
+            };
+            if (vk_create_cmdpool(&ci, &gpu->q[gpu_cmdq_to_q[GPU_CI_G]].pool))
+                return -1;
+        }
         
         // Only update state when nothing can fail
         for(u32 i=0; i < GPU_MEM_CNT; ++i)
@@ -157,11 +194,39 @@ internal int gpu_create_mem(void)
         gpu->flags |= GPU_MEM_INI;
     }
     
-    int max_w = 0;
-    int max_h = 0;
+    VkCommandBuffer cmd[GPU_CMDQ_CNT];
+    if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
+        VkCommandBufferAllocateInfo ai = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
+            ai.commandPool = gpu->q[gpu_cmdq_to_q[i]].pool;
+            if (vk_alloc_cmds(&ai, &cmd[i])) {
+                log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", i, gpu_cmdq_names[i]);
+                return -1;
+            }
+        }
+    } else {
+        VkCommandBufferAllocateInfo ai = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandPool = gpu->q[gpu_cmdq_to_q[GPU_CI_G]].pool,
+            .commandBufferCount = 1,
+        };
+        if (vk_alloc_cmds(&ai, &cmd[GPU_CI_G])) {
+            log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", GPU_CI_G, gpu_cmdq_names[GPU_CI_G]);
+            return -1;
+        }
+    }
+    
+    u32 max_w = 0;
+    u32 max_h = 0;
     u32 img_sz = 0;
     u32 bm_tot = 0;
-    u32 bm_sz[CHT_SZ];
+    u32 bm_sz[CHT_SZ]; // probably don't need size and dim, basically trading multiplies for stores and loads
+    struct rect_u32 bm_dim[CHT_SZ];
     u8 *bm[CHT_SZ];
     VkDeviceMemory mem[GPU_MEM_CNT];
     struct gpu_glyph g[CHT_SZ];
@@ -176,15 +241,17 @@ internal int gpu_create_mem(void)
         VkMemoryRequirements mr[CHT_SZ];
         
         for(u32 i=0; i < cl_array_size(bm); ++i) {
+            u32 w=0,h=0;
             bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
-                                             cht[i], &g[i].w, &g[i].h, &g[i].x, &g[i].y);
+                                             cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &g[i].x, &g[i].y);
             
-            bm_sz[i] = g[i].w * g[i].h;
+            
+            bm_sz[i] = bm_dim[i].w * bm_dim[i].h;
             bm_tot += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
-            if (max_w < g[i].w) max_w = g[i].w;
-            if (max_h < g[i].h) max_h = g[i].h;
+            if (max_w < w) max_w = w;
+            if (max_h < h) max_h = h;
             
-            ici.extent = (VkExtent3D) {.width = g[i].w, .height = g[i].h, .depth = 1};
+            ici.extent = (VkExtent3D) {.width = w, .height = h, .depth = 1};
             
             if (vk_create_img(&ici, &g[i].img)) {
                 if (bm[i])
@@ -248,7 +315,7 @@ internal int gpu_create_mem(void)
     else
         bci[GPU_BI_T].size = vert_sz;
     
-    bci[GPU_BI_V].size = vert_sz;
+    bci[GPU_BI_G].size = vert_sz;
     
     VkBuffer buf[GPU_BUF_CNT];
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
@@ -261,9 +328,9 @@ internal int gpu_create_mem(void)
     }
     
     VkMemoryAllocateInfo ai[GPU_BUF_CNT] = {
-        [GPU_BI_V] = {
+        [GPU_BI_G] = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .memoryTypeIndex = gpu->mem[GPU_MI_V].type,
+            .memoryTypeIndex = gpu->mem[GPU_MI_G].type,
         },
         [GPU_BI_T] = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -271,10 +338,10 @@ internal int gpu_create_mem(void)
         },
     };
     
-    VkMemoryRequirements mr[GPU_BUF_CNT];
+    VkMemoryRequirements buf_mr[GPU_BUF_CNT];
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
-        vk_get_buf_memreq(buf[i], &mr[i]);
-        ai[i].allocationSize = mr[i].size;
+        vk_get_buf_memreq(buf[i], &buf_mr[i]);
+        ai[i].allocationSize = buf_mr[i].size;
         
         if (vk_alloc_mem(&ai[i], &mem[gpu_bi_to_mi[i]])) {
             log_error("Failed to allocate memory for buffer %u (%s)", i, gpu_mem_names[gpu_bi_to_mi[i]]);
@@ -285,13 +352,20 @@ internal int gpu_create_mem(void)
     }
     
     void *buf_map[GPU_BUF_CNT];
-    for(u32 i=0; i < GPU_BUF_CNT; ++i) {
-        if (vk_map_mem(mem[gpu_bi_to_mi[i]], 0, mr[i].size, &buf_map[i])) {
-            log_error("Failed to map buffer memory %u (%s)", i, gpu_mem_names[gpu_bi_to_mi[i]]);
+    if (vk_map_mem(mem[GPU_MI_T], 0, buf_mr[GPU_BI_T].size, &buf_map[GPU_BI_T])) {
+        log_error("Failed to map buffer memory %u (%s)", GPU_BI_T, gpu_mem_names[GPU_MI_T]);
+        goto fail_free_buf_mem;
+    }
+    if (gpu->flags & GPU_MEM_UNI) {
+        if (vk_map_mem(mem[GPU_MI_G], 0, buf_mr[GPU_BI_G].size, &buf_map[GPU_BI_G])) {
+            log_error("Failed to map buffer memory %u (%s)", GPU_BI_G, gpu_mem_names[GPU_BI_G]);
             goto fail_free_buf_mem;
         }
+    }
+    
+    for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if (vk_bind_buf_mem(buf[i], mem[gpu_bi_to_mi[i]], 0)) {
-            log_error("Failed to bind memory to buffer %u (%s)", gpu_mem_names[gpu_bi_to_mi[i]]);
+            log_error("Failed to bind memory to buffer %u (%s)", i, gpu_mem_names[gpu_bi_to_mi[i]]);
             goto fail_free_buf_mem;
         }
     }
@@ -300,10 +374,142 @@ internal int gpu_create_mem(void)
     // successfully created, so now we need to:
     //     - destroy the old objects
     //     - upload the glyph data to the gpu
-    memcpy(gpu->glyphs, g, sizeof(g));
     
-    vk_free_mem(gpu->mem[GPU_BI_T].handle);
-    vk_destroy_buf(gpu->buf[GPU_BI_T].handle);
+    for(u32 i=0; i < CHT_SZ; ++i) {
+        log_error_if((gpu->glyphs[i].img && !gpu->glyphs[i].view) ||
+                     (!gpu->glyphs[i].img && gpu->glyphs[i].view),
+                     "Glyph %u's image and view have different states (one is null, one is valid)");
+        if (gpu->glyphs[i].img)
+            vk_destroy_img(gpu->glyphs[i].img);
+        if (gpu->glyphs[i].view)
+            vk_destroy_imgv(gpu->glyphs[i].view);
+    }
+    memcpy(gpu->glyphs, g, sizeof(g));
+    gpu->cell.dim.w = max_w;
+    gpu->cell.dim.h = max_h;
+    
+    for(u32 i=0; i < GPU_BUF_CNT; ++i) {
+        if (gpu->buf[i].handle)
+            vk_destroy_buf(gpu->buf[i].handle);
+        gpu->buf[i].handle = buf[i];
+        gpu->buf[i].size = bci[i].size;
+        gpu->buf[i].used = 0;
+        gpu->buf[i].data = NULL;
+    }
+    gpu->buf[GPU_BI_T].data = buf_map[GPU_BI_T];
+    if (gpu->flags & GPU_MEM_UNI)
+        gpu->buf[GPU_BI_G].data = buf_map[GPU_BI_G];
+    
+    if (gpu->q[GPU_Q_G].i != gpu->q[GPU_Q_T].i) {
+        enum {UT,TG,STAGE_CNT};
+        VkImageMemoryBarrier2 b[STAGE_CNT][CHT_SZ] = {
+            [UT][0] = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = gpu->glyphs[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            },
+            [TG][0] = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = gpu->q[GPU_Q_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_Q_G].i,
+                .image = gpu->glyphs[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            },
+        };
+        for(u32 i=0; i < STAGE_CNT; ++i) {
+            for(u32 j=1; j < CHT_SZ; ++j) {
+                b[i][j] = b[i][0];
+                b[i][j].image = gpu->glyphs[j].img;
+            }
+        }
+        
+        VkDependencyInfo d[STAGE_CNT] = {
+            [UT] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = CHT_SZ,
+                .pImageMemoryBarriers = b[UT],
+            },
+            [TG] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = CHT_SZ,
+                .pImageMemoryBarriers = b[TG],
+            },
+        };
+        
+        vk_begin_cmd(cmd[GPU_CI_T], GPU_CMD_OT);
+        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[UT]);
+        
+        u32 ofs = 0;
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, bm[i], bm_sz[i]);
+            vk_cmd_copy_buf_to_img(cmd[GPU_CI_T], gpu->buf[GPU_BI_T].handle,
+                                   gpu->glyphs[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
+        }
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[TG]);
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d[TG]);
+        
+        vk_end_cmd(cmd[GPU_CI_T]);
+        vk_end_cmd(cmd[GPU_CI_G]);
+    } else {
+        VkImageMemoryBarrier2 b[CHT_SZ] = {
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = gpu->q[GPU_Q_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_Q_G].i,
+                .image = gpu->glyphs[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            }
+        };
+        for(u32 i=1; i < CHT_SZ; ++i) {
+            b[i] = b[0];
+            b[i].image = gpu->glyphs[i].img;
+        }
+        
+        VkDependencyInfo d = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = CHT_SZ,
+            .pImageMemoryBarriers = b,
+        };
+        
+        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
+        
+        u32 ofs = 0;
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, bm[i], bm_sz[i]);
+            vk_cmd_copy_buf_to_img(cmd[GPU_BI_G], gpu->buf[GPU_BI_G].handle,
+                                   gpu->glyphs[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
+        }
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
+        
+        vk_end_cmd(cmd[GPU_CI_G]);
+    }
+    
+    if (gpu->flags & GPU_MEM_UNI) {
+        vk_free_mem(gpu->mem[GPU_BI_T].handle);
+        vk_destroy_buf(gpu->buf[GPU_BI_T].handle);
+    }
     for(u32 i=0; i < CHT_SZ; ++i)
         stbtt_FreeBitmap(bm[i], NULL);
     
@@ -743,68 +949,62 @@ def_create_gpu(create_gpu)
         vk_get_phys_devq_fam_props(&cnt, NULL); assert(cnt <= MAX_QUEUE_COUNT);
         vk_get_phys_devq_fam_props(&cnt, fp);
         
-        u32 graphics = Max_u32;
-        u32 present  = Max_u32;
-        u32 transfer = Max_u32;
+        u32 qi[GPU_Q_CNT];
+        memset(qi, 0xff, sizeof(qi));
         for(u32 i=0; i < cnt; ++i) {
             b32 surf;
             vk_get_phys_dev_surf_support_khr(i, &surf);
-            if (surf && present == Max_u32) {
-                present = i;
+            if (surf && qi[GPU_Q_P] == Max_u32) {
+                qi[GPU_Q_P] = i;
             }
             if ((fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
                 (fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                graphics == Max_u32)
+                qi[GPU_Q_G] == Max_u32)
             {
-                graphics = i;
+                qi[GPU_Q_G] = i;
             }
             if ((fp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
                 !(fp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
-                transfer == Max_u32)
+                qi[GPU_Q_T] == Max_u32)
             {
-                transfer = i;
+                qi[GPU_Q_T] = i;
             }
         }
         
-        if (graphics == Max_u32 || present == Max_u32) {
-            log_error_if(graphics == Max_u32,
+        if (qi[GPU_Q_T] == Max_u32)
+            qi[GPU_Q_T] = qi[GPU_Q_G];
+        
+        if (qi[GPU_Q_G] == Max_u32 || qi[GPU_Q_P] == Max_u32) {
+            log_error_if(qi[GPU_Q_G] == Max_u32,
                          "physical device %s does not support graphics operations",
                          gpu->props.deviceName);
-            log_error_if(present == Max_u32,
+            log_error_if(qi[GPU_Q_P] == Max_u32,
                          "physical device %s does not support present operations",
                          gpu->props.deviceName);
             return -1;
         }
         
-        if (transfer == Max_u32) transfer = graphics;
-        
         float priority = 1;
-        VkDeviceQueueCreateInfo qci[3];
-        u32 qc = 0;
-        
-        qci[qc] = (VkDeviceQueueCreateInfo) {
-            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = graphics,
-            .queueCount = 1,
-            .pQueuePriorities = &priority,
+        VkDeviceQueueCreateInfo qci[GPU_Q_CNT] = {
+            {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = qi[0],
+                .queueCount = 1,
+                .pQueuePriorities = &priority,
+            }
         };
-        qc++;
-        
-        qci[qc] = (VkDeviceQueueCreateInfo) {
-            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = present,
-            .queueCount = 1,
-            .pQueuePriorities = &priority,
-        };
-        qc += (present != graphics);
-        
-        qci[qc] = (VkDeviceQueueCreateInfo) {
-            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-            .queueFamilyIndex = transfer,
-            .queueCount = 1,
-            .pQueuePriorities = &priority,
-        };
-        qc += (transfer != graphics);
+        u32 qc = 1;
+        {
+            u32 set = 1;
+            for(u32 i=1; i < GPU_Q_CNT; ++i) {
+                if (!set_test(set, qi[i])) {
+                    qci[qc] = qci[0];
+                    qci[qc].queueFamilyIndex = qi[i];
+                    qc += 1;
+                    set = (u32)set_add(set, i);
+                }
+            }
+        }
         
         char *ext_names[] = {
             "VK_KHR_swapchain",
@@ -818,27 +1018,28 @@ def_create_gpu(create_gpu)
         
         if (vk_create_dev(&ci))
             return -1;
+        
+        gpu->q_cnt = qc;
+        for(u32 i=0; i < GPU_Q_CNT; ++i)
+            gpu->q[i].i = qi[i];
+        
+        create_vdt(); // initialize device api calls
+        
+        {
+            vk_get_devq(gpu->q[0].i, &gpu->q[0].handle);
+            u32 set = 1;
+            u8 map[MAX_QUEUE_COUNT];
+            for(u32 i=1; i < GPU_Q_CNT; ++i) {
+                if (!set_test(set, gpu->q[i].i)) {
+                    vk_get_devq(gpu->q[i].i, &gpu->q[i].handle);
+                    map[gpu->q[i].i] = (u8)i;
+                    set = (u32)set_add(set, gpu->q[i].i);
+                } else {
+                    gpu->q[i].handle = gpu->q[map[gpu->q[i].i]].handle;
+                }
+            }
+        }
 #undef MAX_QUEUE_COUNT
-        
-        gpu->qi.g = graphics;
-        gpu->qi.p = present;
-        gpu->qi.t = transfer;
-    }
-    
-    create_vdt(); // initialize device api calls
-    
-    {
-        vk_get_devq(gpu->qi.g, &gpu->qh.g);
-        
-        if (gpu->qi.p != gpu->qi.g)
-            vk_get_devq(gpu->qi.p, &gpu->qh.p);
-        else
-            gpu->qi.p = gpu->qi.g;
-        
-        if (gpu->qi.t != gpu->qi.g)
-            vk_get_devq(gpu->qi.t, &gpu->qh.t);
-        else
-            gpu->qi.t = gpu->qi.g;
     }
     
     {
@@ -876,7 +1077,7 @@ def_create_gpu(create_gpu)
         gpu->sc.info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         gpu->sc.info.clipped = VK_TRUE;
         gpu->sc.info.queueFamilyIndexCount = 1;
-        gpu->sc.info.pQueueFamilyIndices = &gpu->qi.p;
+        gpu->sc.info.pQueueFamilyIndices = &gpu->q[GPU_Q_P].i;
         gpu->sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         
         if (gpu_create_sc())

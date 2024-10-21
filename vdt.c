@@ -44,6 +44,13 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_CreateGraphicsPipelines] = {.name = "vkCreateGraphicsPipelines"},
     [VDT_DestroyPipeline] = {.name = "vkDestroyPipeline"},
     
+    [VDT_CreateCommandPool] = {.name = "vkCreateCommandPool"},
+    [VDT_AllocateCommandBuffers] = {.name = "vkAllocateCommandBuffers"},
+    [VDT_BeginCommandBuffer] = {.name = "vkBeginCommandBuffer"},
+    [VDT_EndCommandBuffer] = {.name = "vkEndCommandBuffer"},
+    [VDT_ResetCommandPool] = {.name = "vkResetCommandPool"},
+    [VDT_CmdPipelineBarrier2] = {.name = "vkCmdPipelineBarrier2"},
+    [VDT_CmdCopyBufferToImage] = {.name = "vkCmdCopyBufferToImage"},
 };
 #else
 struct vdt *vdt;

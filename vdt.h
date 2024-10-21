@@ -14,6 +14,7 @@ enum {
     VDT_GetPhysicalDeviceSurfaceCapabilitiesKHR,
     VDT_GetPhysicalDeviceSurfaceFormatsKHR,
     VDT_GetPhysicalDeviceSurfacePresentModesKHR,
+    
     VDT_INST_END,
     
     // Device API
@@ -49,6 +50,15 @@ enum {
     VDT_DestroyFramebuffer,
     VDT_CreateGraphicsPipelines,
     VDT_DestroyPipeline,
+    
+    VDT_CreateCommandPool,
+    VDT_AllocateCommandBuffers,
+    VDT_BeginCommandBuffer,
+    VDT_EndCommandBuffer,
+    VDT_ResetCommandPool,
+    VDT_CmdPipelineBarrier2,
+    VDT_CmdCopyBufferToImage,
+    
     VDT_DEV_END,
     
     // Other meta info
@@ -250,6 +260,49 @@ static inline VkResult vk_create_gpl(u32 cnt, VkGraphicsPipelineCreateInfo *ci, 
 
 static inline void vk_destroy_pl(VkPipeline pl) {
     vdt_call(DestroyPipeline)(gpu->dev, pl, GAC);
+}
+
+static inline VkResult vk_create_cmdpool(VkCommandPoolCreateInfo *ci, VkCommandPool *pool) {
+    return cvk(vdt_call(CreateCommandPool)(gpu->dev, ci, GAC, pool));
+}
+
+static inline VkResult vk_alloc_cmds(VkCommandBufferAllocateInfo *ai, VkCommandBuffer *cmds) {
+    return cvk(vdt_call(AllocateCommandBuffers)(gpu->dev, ai, cmds));
+}
+
+static inline void vk_begin_cmd(VkCommandBuffer cmd, bool one_time) {
+    VkCommandBufferBeginInfo bi = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = one_time ? VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT : 0x0,
+    };
+    // Deliberately assuming that this will never fail by not returning the result.
+    // Maybe that is a bad idea, but command buffers are supposed to be basically
+    // bottomless, and I will always be submitting a rather tiny number of commands.
+    cvk(vdt_call(BeginCommandBuffer)(cmd, &bi));
+}
+
+static inline void vk_end_cmd(VkCommandBuffer cmd) {
+    // Deliberately assuming that this will never fail by not returning the result.
+    // Maybe that is a bad idea, but command buffers are supposed to be basically
+    // bottomless, and I will always be submitting a rather tiny number of commands.
+    cvk(vdt_call(EndCommandBuffer)(cmd));
+}
+
+static inline void vk_reset_cmdpool(VkCommandPool pool, bool release_resources) {
+    vdt_call(ResetCommandPool)(gpu->dev, pool, release_resources);
+}
+
+static inline void vk_cmd_pl_barr(VkCommandBuffer cmd, VkDependencyInfo *dep) {
+    vdt_call(CmdPipelineBarrier2)(cmd, dep);
+}
+
+static inline void vk_cmd_copy_buf_to_img(VkCommandBuffer cmd, VkBuffer buf, VkImage img, u64 ofs, u32 w, u32 h) {
+    VkBufferImageCopy r = {
+        .bufferOffset = ofs,
+        .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,.layerCount = 1},
+        .imageExtent = {.width = w, .height = h},
+    };
+    vdt_call(CmdCopyBufferToImage)(cmd, buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
 }
 
 def_cvk(cvk_fn)

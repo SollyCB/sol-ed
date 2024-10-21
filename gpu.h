@@ -9,17 +9,26 @@
 #define SC_MAX_IMGS 4 /* Arbitrarily small size that I doubt will be exceeded */
 #define SC_MIN_IMGS 2
 
+#define GPU_MAX_CMDBUFS 16
+
 enum gpu_mem_indices {
-    GPU_MI_V,
+    GPU_MI_G,
     GPU_MI_T,
     GPU_MI_I,
     GPU_MEM_CNT,
 };
 
 enum gpu_buf_indices {
-    GPU_BI_V,
+    GPU_BI_G,
     GPU_BI_T,
     GPU_BUF_CNT,
+};
+
+enum gpu_q_indices {
+    GPU_Q_G,
+    GPU_Q_T,
+    GPU_Q_P,
+    GPU_Q_CNT,
 };
 
 enum gpu_flags {
@@ -32,7 +41,7 @@ enum gpu_flags {
 struct gpu_glyph {
     VkImage img;
     VkImageView view;
-    int x,y,w,h;
+    int x,y;
 };
 
 struct gpu {
@@ -42,6 +51,15 @@ struct gpu {
     VkPhysicalDeviceMemoryProperties memprops;
     VkPhysicalDevice phys_dev;
     VkDevice dev;
+    
+    u32 flags;
+    u32 q_cnt;
+    
+    struct {
+        VkQueue handle;
+        VkCommandPool pool;
+        u32 i;
+    } q[GPU_Q_CNT];
     
     struct {
         VkDeviceMemory handle;
@@ -56,11 +74,7 @@ struct gpu {
     } buf[GPU_BUF_CNT];
     
     struct gpu_glyph glyphs[CHT_SZ];
-    
-    u32 flags;
-    
-    struct { u32 g,t,p; } qi; // queue indices
-    struct { VkQueue g,t,p; } qh; // queue handles
+    struct { struct rect_u32 dim; } cell;
     
     struct {
         VkSwapchainKHR handle;
