@@ -22,6 +22,7 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_GetBufferMemoryRequirements] = {.name = "vkGetBufferMemoryRequirements"},
     [VDT_GetImageMemoryRequirements] = {.name = "vkGetImageMemoryRequirements"},
     [VDT_AllocateMemory] = {.name = "vkAllocateMemory"},
+    [VDT_MapMemory] = {.name = "vkMapMemory"},
     [VDT_FreeMemory] = {.name = "vkFreeMemory"},
     [VDT_BindBufferMemory] = {.name = "vkBindBufferMemory"},
     [VDT_BindImageMemory] = {.name = "vkBindImageMemory"},

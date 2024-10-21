@@ -28,6 +28,7 @@ enum {
     VDT_GetBufferMemoryRequirements,
     VDT_GetImageMemoryRequirements,
     VDT_AllocateMemory,
+    VDT_MapMemory,
     VDT_FreeMemory,
     VDT_BindBufferMemory,
     VDT_BindImageMemory,
@@ -156,15 +157,19 @@ static inline void vk_destroy_img(VkImage img) {
 }
 
 static inline void vk_get_buf_memreq(VkBuffer buf, VkMemoryRequirements *mr) {
-    vdt_call(GetBufferMemoryRequirements)(gpu->dev, buf, GAC);
+    vdt_call(GetBufferMemoryRequirements)(gpu->dev, buf, mr);
 }
 
 static inline void vk_get_img_memreq(VkImage img, VkMemoryRequirements *mr) {
-    vdt_call(GetImageMemoryRequirements)(gpu->dev, img, GAC);
+    vdt_call(GetImageMemoryRequirements)(gpu->dev, img, mr);
 }
 
 static inline VkResult vk_alloc_mem(VkMemoryAllocateInfo *ci, VkDeviceMemory *mem) {
     return cvk(vdt_call(AllocateMemory)(gpu->dev, ci, GAC, mem));
+}
+
+static inline VkResult vk_map_mem(VkDeviceMemory mem, u64 ofs, u64 sz, void **p) {
+    return cvk(vdt_call(MapMemory)(gpu->dev, mem, ofs, sz, 0x0, p));
 }
 
 static inline void vk_free_mem(VkDeviceMemory mem) {
