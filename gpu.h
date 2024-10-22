@@ -1,7 +1,7 @@
 #ifndef GPU_H
 #define GPU_H
 
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 
 #include "shader.h"
 #include "chars.h"
@@ -161,14 +161,22 @@ union gpu_memreq_info {
     VkImageCreateInfo *img;
 };
 
+// pd:
+//   - x,y: offsets from the top left corner of the screen
+//   - z,w: x and y scalars (1 is the width or height of the screen)
+// fg:
+//   - x,y,z,w: rgba color
+// bg:
+//   - x,y,z: rgb color
+//   - w: char index
 struct gpu_cell_data {
-    u16 pd[3]; // x and y are offsets from the top left corner of the screen in pixels, z is scale
-    u8 fg[3]; // rgb color
-    u8 bg[3]; // rgb color
+    u16 pd[4];
+    u8 fg[4];
+    u8 bg[4];
 };
-#define CELL_PD_FMT VK_FORMAT_R16G16B16_UINT
-#define CELL_FG_FMT VK_FORMAT_R8G8B8_UNORM
-#define CELL_BG_FMT VK_FORMAT_R8G8B8_UNORM
+#define CELL_PD_FMT VK_FORMAT_R16G16B16A16_UNORM
+#define CELL_FG_FMT VK_FORMAT_R8G8B8A8_UNORM
+#define CELL_BG_FMT VK_FORMAT_R8G8B8A8_UNORM
 #define CELL_CH_FMT VK_FORMAT_R8_UNORM
 
 #endif // ifdef LIB

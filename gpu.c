@@ -630,10 +630,17 @@ internal int gpu_create_dsl(void)
 
 internal int gpu_create_pll(void)
 {
+    VkPushConstantRange pcr = {
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .offset = 0,
+        .size = 16, // 1 * vec4
+    };
     VkPipelineLayoutCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &gpu->dsl,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pcr,
     };
     
     if (vk_create_pll(&ci, &gpu->pll))
@@ -863,6 +870,16 @@ internal int gpu_create_pl(void)
 def_create_gpu(create_gpu)
 {
     {
+        u32 ver;
+        if (vkEnumerateInstanceVersion(&ver) == VK_ERROR_OUT_OF_HOST_MEMORY) {
+            log_error("Failed to enumerate vulkan instance version (note that this can only happen due to the loader or enabled layers).");
+            return -1;
+        }
+        if (VK_API_VERSION_MAJOR(ver) != 1 || VK_API_VERSION_MINOR(ver) < 3) {
+            log_error("Vulkan instance version is not 1.3 or higher");
+            return -1;
+        }
+        
         VkApplicationInfo ai = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
         ai.pApplicationName = "name";
         ai.applicationVersion = 0;
@@ -1095,26 +1112,18 @@ def_gpu_create_sh(gpu_create_sh)
     // You have to look at the structure of shader.h to understand what is happening here.
     // It is basically chopping the file up into vertex and fragment source code segments
     // based on the position of some marker defines in the file.
-    u32 ofs = strfind(STR("GL_core_profile"), src);
-    src.size -= ofs;
+    u32 ofs = strfind(STR("SH_BEGIN"), src) + (u32)strlen("SH_BEGIN") + 1;
+    u32 sz = strfind(STR("SH_END"), src) + (u32)strlen("SH_END");
     src.data += ofs;
+    src.size = sz - ofs;
     
-    u32 v_ofs = strfind(STR(SH_VERT_BEGIN_STR), src) + (u32)strlen(SH_VERT_BEGIN_STR) + 1; // +1 for newline
-    u32 f_ofs = strfind(STR(SH_FRAG_BEGIN_STR), src) + (u32)strlen(SH_FRAG_BEGIN_STR) + 1;
-    u32 v_sz = strfind(STR(SH_VERT_END_STR), src) - v_ofs;
-    u32 f_sz = strfind(STR(SH_FRAG_END_STR), src) - f_ofs;
-    
-    src.data[v_ofs + v_sz] = 0;
-    src.data[f_ofs + f_sz] = 0;
-    
-    write_file(SH_VERT_SRC_URI, src.data + v_ofs, v_sz);
-    write_file(SH_FRAG_SRC_URI, src.data + f_ofs, f_sz);
+    write_file(SH_SRC_OUT_URI, src.data, src.size);
     
     struct os_process vp = {.p = INVALID_HANDLE_VALUE};
     struct os_process fp = {.p = INVALID_HANDLE_VALUE};
     
-    char *va[] = {SH_CL_URI, SH_VERT_SRC_URI, "-Werror -std=450 -o", SH_VERT_OUT_URI};
-    char *fa[] = {SH_CL_URI, SH_FRAG_SRC_URI, "-Werror -std=450 -o", SH_FRAG_OUT_URI};
+    char *va[] = {SH_CL_URI, "-fshader-stage=vert", SH_SRC_OUT_URI, "-Werror -std=450 -o", SH_VERT_OUT_URI, "-DVERT"};
+    char *fa[] = {SH_CL_URI, "-fshader-stage=frag", SH_SRC_OUT_URI, "-Werror -std=450 -o", SH_FRAG_OUT_URI};
     
     char vcmd_buf[256];
     char fcmd_buf[256];
@@ -1139,14 +1148,9 @@ def_gpu_create_sh(gpu_create_sh)
     int fr = os_await_process(&fp);
     
     if (vr || fr) {
-        if (vr) {
-            println("\nVertex shader source:");
-            write_stdout(src.data + v_ofs, v_sz);
-        }
-        if (fr) {
-            println("\nFragment shader source:");
-            write_stdout(src.data + f_ofs, f_sz);
-        }
+        println("\nshader source dump:");
+        write_stdout(src.data, src.size);
+        println("\nend of shader source dump");
         log_error_if(vr, "Vertex shader compiler return non-zero error code (%i)", (s64)vr);
         log_error_if(fr, "Fragment shader compiler return non-zero error code (%i)", (s64)fr);
         res = -1;

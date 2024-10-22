@@ -93,9 +93,7 @@ def_prg_update(prg_update)
         if (cmpftim(FTIM_MOD, LIB_SRC, LIB_SRC_TEMP) < 0)
             prg->flags |= PRG_RLD;
         
-        if (cmpftim(FTIM_MOD, SH_VERT_SRC_URI, SH_SRC_URI) < 0 ||
-            cmpftim(FTIM_MOD, SH_FRAG_SRC_URI, SH_SRC_URI) < 0)
-        {
+        if (cmpftim(FTIM_MOD, SH_SRC_OUT_URI, SH_SRC_URI) < 0) {
             println("Recompiling shaders");
             // spirv parser to recreate pipeline layout?
             if (gpu_create_sh()) {
