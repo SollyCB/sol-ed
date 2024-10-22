@@ -68,9 +68,12 @@ struct gpu {
         VkImage img;
         VkImageView view;
         int x,y;
-    } glyphs[CHT_SZ];
+    } glyph[CHT_SZ];
     
-    struct rect_u32 cell_dim; // dimensions of a character cell
+    struct {
+        struct rect_u32 dim; // dimensions of a character cell
+        u32 cnt;
+    } cell;
     
     struct {
         VkSwapchainKHR handle;
@@ -92,7 +95,18 @@ struct gpu {
     
     VkDescriptorSetLayout dsl;
     VkDescriptorPool dp;
-    VkDescriptorSet ds[CHT_SZ];
+    VkDescriptorSet ds;
+    
+    VkSampler sampler;
+    
+    struct draw_buffer { // size == gpu.cell.cnt
+        struct draw_info {
+            struct { u16 x,y; } ofs;
+            struct { u16 x,y; } scl;
+            u8 fg[4],bg[4];
+        } *di;
+        u32 used;
+    } db;
 };
 
 #ifdef LIB
@@ -174,10 +188,16 @@ struct gpu_cell_data {
     u8 fg[4];
     u8 bg[4];
 };
-#define CELL_PD_FMT VK_FORMAT_R16G16B16A16_UNORM
-#define CELL_FG_FMT VK_FORMAT_R8G8B8A8_UNORM
-#define CELL_BG_FMT VK_FORMAT_R8G8B8A8_UNORM
-#define CELL_CH_FMT VK_FORMAT_R8_UNORM
+
+enum cell_vertex_fmts {
+    CELL_PD_FMT = VK_FORMAT_R16G16B16A16_UNORM,
+    CELL_FG_FMT = VK_FORMAT_R8G8B8A8_UNORM,
+    CELL_BG_FMT = VK_FORMAT_R8G8B8A8_UNORM,
+    CELL_GL_FMT = VK_FORMAT_R8_UNORM,
+};
+
+// calculate the size in bytes of the draw buffer
+#define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)
 
 #endif // ifdef LIB
 

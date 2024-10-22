@@ -78,8 +78,9 @@ struct program {
 #ifdef LIB
 extern struct program *prg;
 
-#define salloc(ti, sz) allocate(&prg->allocs[ti].scratch, sz)
-#define palloc(ti, sz) allocate(&prg->allocs[ti].persist, sz)
+#define salloc(thread_index, sz) allocate(&prg->allocs[thread_index].scratch, sz)
+#define palloc(thread_index, sz) allocate(&prg->allocs[thread_index].persist, sz)
+#define pfree(thread_index, p, sz) deallocate(&prg->allocs[thread_index].persist, p, sz)
 #endif
 
 #endif // PRG_H

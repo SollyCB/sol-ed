@@ -35,6 +35,8 @@ enum {
     VDT_BindImageMemory,
     VDT_CreateImageView,
     VDT_DestroyImageView,
+    VDT_CreateSampler,
+    VDT_DestroySampler,
     VDT_CreateShaderModule,
     VDT_DestroyShaderModule,
     VDT_CreateDescriptorSetLayout,
@@ -44,6 +46,7 @@ enum {
     VDT_CreateDescriptorPool,
     VDT_DestroyDescriptorPool,
     VDT_AllocateDescriptorSets,
+    VDT_UpdateDescriptorSets,
     VDT_CreateRenderPass,
     VDT_DestroyRenderPass,
     VDT_CreateFramebuffer,
@@ -205,6 +208,14 @@ static inline void vk_destroy_imgv(VkImageView view) {
     vdt_call(DestroyImageView)(gpu->dev, view, GAC);
 }
 
+static inline VkResult vk_create_sampler(VkSamplerCreateInfo *ci, VkSampler *sampler) {
+    return cvk(vdt_call(CreateSampler)(gpu->dev, ci, GAC, sampler));
+}
+
+static inline void vk_destroy_sampler(VkSampler sampler) {
+    vdt_call(DestroySampler)(gpu->dev, sampler, GAC);
+}
+
 static inline VkResult vk_create_shmod(VkShaderModuleCreateInfo *ci, VkShaderModule *mod) {
     return cvk(vdt_call(CreateShaderModule)(gpu->dev, ci, GAC, mod));
 }
@@ -239,6 +250,10 @@ static inline void vk_destroy_dp(VkDescriptorPool dp) {
 
 static inline VkResult vk_alloc_ds(VkDescriptorSetAllocateInfo *ai, VkDescriptorSet *ds) {
     return cvk(vdt_call(AllocateDescriptorSets)(gpu->dev, ai, ds));
+}
+
+static inline void vk_update_ds(u32 cnt, VkWriteDescriptorSet *writes) {
+    vdt_call(UpdateDescriptorSets)(gpu->dev, cnt, writes, 0, NULL);
 }
 
 static inline VkResult vk_create_rp(VkRenderPassCreateInfo *ci, VkRenderPass *rp) {

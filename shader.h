@@ -13,6 +13,10 @@
 #define SH_SI_SET 0 /* sampler descriptor set index */
 #define SH_SI_BND 0 /* sampler descriptor set binding */
 
+#define SH_PD_LOC 0
+#define SH_FG_LOC 1
+#define SH_BG_LOC 2
+
 #if GL_core_profile
 
 struct vf_info_t {
@@ -20,7 +24,6 @@ struct vf_info_t {
     vec4 bg;
     vec2 tc;
 };
-//#define VF_INFO_LOC 0
 
 #ifdef VERT
 /****************************************************/
@@ -29,9 +32,9 @@ struct vf_info_t {
 // I would like to parse the spirv to get these automatically
 // but I don't think that the VkFormats would be correct
 // because I want to pass in normalized r8/r16, not float...
-layout(location = 0) in vec4 pd;
-layout(location = 1) in vec4 fg;
-layout(location = 2) in vec4 bg;
+layout(location = SH_PD_LOC) in vec4 pd;
+layout(location = SH_FG_LOC) in vec4 fg;
+layout(location = SH_BG_LOC) in vec4 bg;
 
 layout(location = 0) out vf_info_t vf_info;
 

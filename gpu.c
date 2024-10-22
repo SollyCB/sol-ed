@@ -85,7 +85,7 @@ internal int gpu_create_mem(void)
     local_persist VkImageCreateInfo ici = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
-        .format = CELL_CH_FMT,
+        .format = CELL_GL_FMT,
         .extent = {.width = 1,.height = 1,.depth = 1},
         .mipLevels = 1,
         .arrayLayers = 1,
@@ -172,6 +172,23 @@ internal int gpu_create_mem(void)
         gpu->flags |= GPU_MEM_INI;
     }
     
+    if (gpu->sampler == VK_NULL_HANDLE) {
+        VkSamplerCreateInfo ci = {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_NEAREST,
+            .minFilter = VK_FILTER_NEAREST,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .minLod = 0,
+            .maxLod = VK_LOD_CLAMP_NONE,
+            .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+        };
+        if (vk_create_sampler(&ci, &gpu->sampler))
+            return -1;
+    }
+    
     VkCommandBuffer cmd[GPU_CMDQ_CNT];
     if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
         for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
@@ -181,7 +198,7 @@ internal int gpu_create_mem(void)
         for(u32 i=0; i < GPU_CMDQ_CNT; ++i) {
             u32 ci = gpu_alloc_cmds(i, 1); 
             if (ci == Max_u32) {
-                log_error("Failed to allocate %u command buffer for uploading glyphs (%s)", i, gpu_cmd_name(i));
+                log_error("Failed to allocate %u command buffer for uploading glyph (%s)", i, gpu_cmd_name(i));
                 return -1;
             }
             cmd[i] = gpu_cmd(i).bufs[ci];
@@ -191,7 +208,7 @@ internal int gpu_create_mem(void)
         gpu_dealloc_cmds(GPU_CI_G);
         u32 ci = gpu_alloc_cmds(GPU_QI_G, 1);
         if (ci == Max_u32) {
-            log_error("Failed to allocate command buffer for uploading glyphs (%s)", gpu_cmd_name(GPU_CI_G));
+            log_error("Failed to allocate command buffer for uploading glyph (%s)", gpu_cmd_name(GPU_CI_G));
             return -1;
         }
         cmd[GPU_CI_G] = gpu_cmd(GPU_CI_G).bufs[ci];
@@ -265,7 +282,7 @@ internal int gpu_create_mem(void)
         local_persist VkImageViewCreateInfo vci = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = CELL_CH_FMT,
+            .format = CELL_GL_FMT,
             .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,.levelCount = 1,.layerCount = 1,},
         };
         
@@ -345,28 +362,41 @@ internal int gpu_create_mem(void)
         }
     }
     
+    void *di = palloc(MT, gpu_dba_sz(cell_cnt));
+    if (!di) {
+        log_error("Failed to allocate memory for draw info array (%u bytes)", gpu_dba_sz(cell_cnt));
+        goto fail_free_buf_mem;
+    }
+    
     // @TODO CurrentTask: At this stage in the program, all memory objects have been
     // successfully created, so now we need to:
     //     - destroy the old objects
     //     - upload the glyph data to the gpu
     
+    if (gpu->db.di)
+        pfree(MT, gpu->db.di, gpu_dba_sz(gpu->cell.cnt));
+    gpu->db.di = di;
+    gpu->db.used = 0;
+    
     for(u32 i=0; i < GPU_MEM_CNT; ++i) {
-        if (gpu->mem[i].handle) vk_free_mem(gpu->mem[i].handle);
+        if (gpu->mem[i].handle)
+            vk_free_mem(gpu->mem[i].handle);
         gpu->mem[i].handle = mem[i];
     }
     
     for(u32 i=0; i < CHT_SZ; ++i) {
-        log_error_if((gpu->glyphs[i].img && !gpu->glyphs[i].view) ||
-                     (!gpu->glyphs[i].img && gpu->glyphs[i].view),
+        log_error_if((gpu->glyph[i].img && !gpu->glyph[i].view) ||
+                     (!gpu->glyph[i].img && gpu->glyph[i].view),
                      "Glyph %u's image and view have different states (one is null, one is valid)");
-        if (gpu->glyphs[i].img)
-            vk_destroy_img(gpu->glyphs[i].img);
-        if (gpu->glyphs[i].view)
-            vk_destroy_imgv(gpu->glyphs[i].view);
+        if (gpu->glyph[i].img)
+            vk_destroy_img(gpu->glyph[i].img);
+        if (gpu->glyph[i].view)
+            vk_destroy_imgv(gpu->glyph[i].view);
     }
-    memcpy(gpu->glyphs, g, sizeof(g));
-    gpu->cell_dim.w = max_w;
-    gpu->cell_dim.h = max_h;
+    memcpy(gpu->glyph, g, sizeof(g));
+    gpu->cell.dim.w = max_w;
+    gpu->cell.dim.h = max_h;
+    gpu->cell.cnt = cell_cnt;
     
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if (gpu->buf[i].handle)
@@ -391,7 +421,7 @@ internal int gpu_create_mem(void)
                 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                 .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = gpu->glyphs[0].img,
+                .image = gpu->glyph[0].img,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
             },
             [TG][0] = {
@@ -402,14 +432,14 @@ internal int gpu_create_mem(void)
                 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
                 .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
-                .image = gpu->glyphs[0].img,
+                .image = gpu->glyph[0].img,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
             },
         };
         for(u32 i=0; i < STAGE_CNT; ++i) {
             for(u32 j=1; j < CHT_SZ; ++j) {
                 b[i][j] = b[i][0];
-                b[i][j].image = gpu->glyphs[j].img;
+                b[i][j].image = gpu->glyph[j].img;
             }
         }
         
@@ -435,7 +465,7 @@ internal int gpu_create_mem(void)
         for(u32 i=0; i < CHT_SZ; ++i) {
             memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, bm[i], bm_sz[i]);
             vk_cmd_copy_buf_to_img(cmd[GPU_CI_T], gpu->buf[GPU_BI_T].handle,
-                                   gpu->glyphs[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+                                   gpu->glyph[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
             ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
         }
         
@@ -454,13 +484,13 @@ internal int gpu_create_mem(void)
                 .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
                 .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
-                .image = gpu->glyphs[0].img,
+                .image = gpu->glyph[0].img,
                 .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
             }
         };
         for(u32 i=1; i < CHT_SZ; ++i) {
             b[i] = b[0];
-            b[i].image = gpu->glyphs[i].img;
+            b[i].image = gpu->glyph[i].img;
         }
         
         VkDependencyInfo d = {
@@ -477,7 +507,7 @@ internal int gpu_create_mem(void)
         for(u32 i=0; i < CHT_SZ; ++i) {
             memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, bm[i], bm_sz[i]);
             vk_cmd_copy_buf_to_img(cmd[GPU_BI_G], gpu->buf[GPU_BI_G].handle,
-                                   gpu->glyphs[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+                                   gpu->glyph[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
             ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
         }
         
@@ -672,8 +702,30 @@ internal int gpu_create_ds(void)
     ai.descriptorSetCount = 1;
     ai.pSetLayouts = &gpu->dsl;
     
-    if (vk_alloc_ds(&ai, gpu->ds))
+    if (vk_alloc_ds(&ai, &gpu->ds) == 0)
         return -1;
+    
+    VkDescriptorImageInfo ii[CHT_SZ] = {
+        {
+            .sampler = gpu->sampler,
+            .imageView = gpu->glyph[0].view,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        }
+    };
+    for(u32 i=1; i < CHT_SZ; ++i) {
+        ii[i] = ii[0];
+        ii[i].imageView = gpu->glyph[i].view;
+    }
+    
+    VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    w.dstSet = gpu->ds;
+    w.dstBinding = 0;
+    w.dstArrayElement = 0;
+    w.descriptorCount = CHT_SZ;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = ii;
+    
+    vk_update_ds(1, &w);
     
     return 0;
 }
@@ -778,8 +830,36 @@ internal int gpu_create_pl(void)
         }
     };
     
+    local_persist VkVertexInputBindingDescription vi_b = {
+        .binding = 0,
+        .stride = sizeof(struct gpu_cell_data),
+        .inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
+    };
+    
+    local_persist VkVertexInputAttributeDescription vi_a[] = {
+        [SH_PD_LOC] = {
+            .location = SH_PD_LOC,
+            .format = CELL_PD_FMT,
+            .offset = offsetof(struct gpu_cell_data, pd),
+        },
+        [SH_FG_LOC] = {
+            .location = SH_FG_LOC,
+            .format = CELL_FG_FMT,
+            .offset = offsetof(struct gpu_cell_data, fg),
+        },
+        [SH_BG_LOC] = {
+            .location = SH_BG_LOC,
+            .format = CELL_BG_FMT,
+            .offset = offsetof(struct gpu_cell_data, bg),
+        },
+    };
+    
     local_persist VkPipelineVertexInputStateCreateInfo vi = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 1,
+        .vertexAttributeDescriptionCount = cl_array_size(vi_a),
+        .pVertexBindingDescriptions = &vi_b,
+        .pVertexAttributeDescriptions = vi_a
     };
     
     local_persist VkPipelineInputAssemblyStateCreateInfo ia = {
@@ -1223,8 +1303,8 @@ def_gpu_check_leaks(gpu_check_leaks)
     }
     
     for(u32 i=0; i < CHT_SZ; ++i) {
-        vk_destroy_img(gpu->glyphs[i].img);
-        vk_destroy_imgv(gpu->glyphs[i].view);
+        vk_destroy_img(gpu->glyph[i].img);
+        vk_destroy_imgv(gpu->glyph[i].view);
     }
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if (gpu->buf[i].handle)
