@@ -958,12 +958,27 @@ internal int gpu_create_pl(void)
     return 0;
 }
 
-internal int gpu_db_add_char(struct offset_u16 ofs, struct rgba fg, struct rgba bg)
+internal struct rect_u16 gpu_normalize_px_rect(struct rect_u16 rect)
 {
-    // TODO(SollyCB): 
+    struct rect_u16 r;
+    r.ofs.x = (u16)floorf((f32)rect.ofs.x * win->rdim.w * 65535);
+    r.ofs.y = (u16)floorf((f32)rect.ofs.y * win->rdim.h * 65535);
+    r.ext.w = (u16)ceilf((f32)rect.ext.w * win->rdim.w * 65535);
+    r.ext.h = (u16)ceilf((f32)rect.ext.h * win->rdim.h * 65535);
+    return r;
 }
 
-internal int gpu_db_add(struct rect_u16 rect, struct rgba bg)
+internal struct rect_u16 gpu_px_to_cell_rect(struct rect_u16 rect)
+{
+    struct rect_u16 r;
+    r.ofs.x = (u16)floorf((f32)rect.ofs.x * gpu->cell.rdim_px.w);
+    r.ofs.y = (u16)floorf((f32)rect.ofs.y * gpu->cell.rdim_px.h);
+    r.ext.w = (u16)ceilf((f32)rect.ext.w * gpu->cell.rdim_px.w);
+    r.ext.h = (u16)ceilf((f32)rect.ext.h * gpu->cell.rdim_px.h);
+    return r;
+}
+
+internal int gpu_db_add(struct rect_u16 rect, struct rgba fg, struct rgba bg)
 {
     if (gpu->db.used == gpu->cell.cnt)
         return -1;
@@ -971,24 +986,15 @@ internal int gpu_db_add(struct rect_u16 rect, struct rgba bg)
     struct rect_u16 win_rect = {.ext = win->dim};
     rect_clamp(rect, win_rect);
     
-    rect.ext.w += rect.ofs.x;
-    rect.ext.h += rect.ofs.y;
-    
-    struct rect_u16 r;
-    r.ofs.x = (u16)floorf((f32)rect.ofs.x * win->rdim.w * 65535);
-    r.ofs.y = (u16)floorf((f32)rect.ofs.y * win->rdim.h * 65535);
-    r.ext.w = (u16)ceilf((f32)rect.ext.w * win->rdim.w * 65535);
-    r.ext.h = (u16)ceilf((f32)rect.ext.h * win->rdim.h * 65535);
-    
-    gpu->db.di[gpu->db.used].pd = r;
+    gpu->db.di[gpu->db.used].pd = gpu_normalize_px_rect(rect);
     gpu->db.di[gpu->db.used].bg = bg;
+    gpu->db.di[gpu->db.used].fg = fg;
     gpu->db.used += 1;
     
-    struct rect_u16 cr;
-    cr.ofs.x = (u16)floorf((f32)rect.ofs.x * gpu->cell.rdim_px.w);
-    cr.ofs.y = (u16)floorf((f32)rect.ofs.y * gpu->cell.rdim_px.h);
-    cr.ext.w = (u16)ceilf((f32)rect.ext.w * gpu->cell.rdim_px.w);
-    cr.ext.h = (u16)ceilf((f32)rect.ext.h * gpu->cell.rdim_px.h);
+    // makes the following calculations generally more concise
+    rect.ext.w += rect.ofs.x;
+    rect.ext.h += rect.ofs.y;
+    struct rect_u16 cr = gpu_px_to_cell_rect(rect);
     
     for(u32 x = (u32)cr.ofs.x + (u32)cr.ofs.y * gpu->cell.win_dim_cells.w;
         x < (u32)cr.ext.w + (u32)(cr.ext.h-1) * gpu->cell.win_dim_cells.w;
@@ -1254,14 +1260,14 @@ def_create_gpu(create_gpu)
     
 #if 1
     {
-        struct rgba bg={};
+        struct rgba fg={},bg={};
         struct rect_u16 r;
         r.ofs.x = gpu->cell.dim_px.w * 5;
         r.ofs.y = gpu->cell.dim_px.h * 5;
         r.ext.w = gpu->cell.dim_px.w * 5;
         r.ext.h = gpu->cell.dim_px.h * 5;
         
-        gpu_db_add(r, bg);
+        gpu_db_add(r, fg, bg);
         gpu_db_flush();
     }
 #endif
