@@ -219,7 +219,7 @@ internal int gpu_create_mem(void)
     u32 img_sz = 0;
     u32 bm_tot = 0;
     u32 bm_sz[CHT_SZ]; // probably don't need size and dim, basically trading multiplies for stores and loads
-    struct rect_u32 bm_dim[CHT_SZ];
+    struct extent_u32 bm_dim[CHT_SZ];
     u8 *bm[CHT_SZ];
     VkDeviceMemory mem[GPU_MEM_CNT];
     struct gpu_glyph g[CHT_SZ];
@@ -297,9 +297,13 @@ internal int gpu_create_mem(void)
         }
     }
     
-    // @Todo Probably will need to add padding between characters, or maybe the font includes it?
-    // @Todo There will be other things to draw besides characters (the window borders, cursor)
-    u32 cell_cnt = (win->dim.w / max_w + 1) * (win->dim.h / max_h + 1);
+    max_w += 1; // 1px padding between char cells
+    max_h += 1;
+    
+    struct extent_u16 win_dim_cells;
+    win_dim_cells.w = (u16)ceilf((f32)win->dim.w / max_w);
+    win_dim_cells.h = (u16)ceilf((f32)win->dim.h / max_h);
+    u32 cell_cnt = win_dim_cells.w * win_dim_cells.h;
     u32 vert_sz = sizeof(struct gpu_cell_data) * cell_cnt;
     
     if (vert_sz < bm_tot || (gpu->flags & GPU_MEM_UNI))
@@ -362,9 +366,10 @@ internal int gpu_create_mem(void)
         }
     }
     
-    void *di = palloc(MT, gpu_dba_sz(cell_cnt));
-    if (!di) {
-        log_error("Failed to allocate memory for draw info array (%u bytes)", gpu_dba_sz(cell_cnt));
+    u64 db_mem_sz = gpu_dba_sz(cell_cnt) + large_set_buffer_size(cell_cnt);
+    void *db = palloc(MT, db_mem_sz);
+    if (!db) {
+        log_error("Failed to allocate memory for draw info array (%u bytes)", db_mem_sz);
         goto fail_free_buf_mem;
     }
     
@@ -374,9 +379,11 @@ internal int gpu_create_mem(void)
     //     - upload the glyph data to the gpu
     
     if (gpu->db.di)
-        pfree(MT, gpu->db.di, gpu_dba_sz(gpu->cell.cnt));
-    gpu->db.di = di;
+        pfree(MT, gpu->db.di);
+    gpu->db.di = db;
     gpu->db.used = 0;
+    
+    create_large_set(cell_cnt, (u64*)((u8*)db + gpu_dba_sz(cell_cnt)), NULL, &gpu->db.occupado);
     
     for(u32 i=0; i < GPU_MEM_CNT; ++i) {
         if (gpu->mem[i].handle)
@@ -394,9 +401,16 @@ internal int gpu_create_mem(void)
             vk_destroy_imgv(gpu->glyph[i].view);
     }
     memcpy(gpu->glyph, g, sizeof(g));
-    gpu->cell.dim.w = max_w;
-    gpu->cell.dim.h = max_h;
     gpu->cell.cnt = cell_cnt;
+    
+    gpu->cell.dim_px.w = (u16)max_w;
+    gpu->cell.dim_px.h = (u16)max_h;
+    gpu->cell.win_dim_cells = win_dim_cells;
+    
+    gpu->cell.rdim_px.w = 1.0f / max_w;
+    gpu->cell.rdim_px.h = 1.0f / max_h;
+    gpu->cell.rwin_dim_cells.w = 1.0f / win_dim_cells.w;
+    gpu->cell.rwin_dim_cells.h = 1.0f / win_dim_cells.h;
     
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if (gpu->buf[i].handle)
@@ -944,6 +958,65 @@ internal int gpu_create_pl(void)
     return 0;
 }
 
+internal int gpu_db_add_char(struct offset_u16 ofs, struct rgba fg, struct rgba bg)
+{
+    // TODO(SollyCB): 
+}
+
+internal int gpu_db_add(struct rect_u16 rect, struct rgba bg)
+{
+    if (gpu->db.used == gpu->cell.cnt)
+        return -1;
+    
+    struct rect_u16 win_rect = {.ext = win->dim};
+    rect_clamp(rect, win_rect);
+    
+    rect.ext.w += rect.ofs.x;
+    rect.ext.h += rect.ofs.y;
+    
+    struct rect_u16 r;
+    r.ofs.x = (u16)floorf((f32)rect.ofs.x * win->rdim.w * 65535);
+    r.ofs.y = (u16)floorf((f32)rect.ofs.y * win->rdim.h * 65535);
+    r.ext.w = (u16)ceilf((f32)rect.ext.w * win->rdim.w * 65535);
+    r.ext.h = (u16)ceilf((f32)rect.ext.h * win->rdim.h * 65535);
+    
+    gpu->db.di[gpu->db.used].pd = r;
+    gpu->db.di[gpu->db.used].bg = bg;
+    gpu->db.used += 1;
+    
+    struct rect_u16 cr;
+    cr.ofs.x = (u16)floorf((f32)rect.ofs.x * gpu->cell.rdim_px.w);
+    cr.ofs.y = (u16)floorf((f32)rect.ofs.y * gpu->cell.rdim_px.h);
+    cr.ext.w = (u16)ceilf((f32)rect.ext.w * gpu->cell.rdim_px.w);
+    cr.ext.h = (u16)ceilf((f32)rect.ext.h * gpu->cell.rdim_px.h);
+    
+    for(u32 x = (u32)cr.ofs.x + (u32)cr.ofs.y * gpu->cell.win_dim_cells.w;
+        x < (u32)cr.ext.w + (u32)(cr.ext.h-1) * gpu->cell.win_dim_cells.w;
+        x += gpu->cell.win_dim_cells.w)
+    {
+        for(u32 i = x; i < x + (cr.ext.w - cr.ofs.x); ++i) {
+            large_set_add(gpu->db.occupado, i);
+            println("Added cell %u (%u, %u)", i,
+                    i % gpu->cell.win_dim_cells.w,
+                    i / gpu->cell.win_dim_cells.w);
+        }
+    }
+    
+    return 0;
+}
+
+internal void gpu_db_flush(void)
+{
+    for(u32 i=0; i < gpu->cell.cnt; ++i) {
+        if (large_set_test(gpu->db.occupado, i)) {
+            println("Drawing cell %u (%u, %u)", i,
+                    i % gpu->cell.win_dim_cells.w,
+                    (u64)i / gpu->cell.win_dim_cells.w);
+        }
+    }
+}
+
+
 /*******************************************************************/
 // Header functions
 
@@ -1179,6 +1252,20 @@ def_create_gpu(create_gpu)
     gpu_create_fb();
     gpu_create_pl();
     
+#if 1
+    {
+        struct rgba bg={};
+        struct rect_u16 r;
+        r.ofs.x = gpu->cell.dim_px.w * 5;
+        r.ofs.y = gpu->cell.dim_px.h * 5;
+        r.ext.w = gpu->cell.dim_px.w * 5;
+        r.ext.h = gpu->cell.dim_px.h * 5;
+        
+        gpu_db_add(r, bg);
+        gpu_db_flush();
+    }
+#endif
+    
     return 0;
 }
 
@@ -1323,6 +1410,7 @@ def_gpu_check_leaks(gpu_check_leaks)
     
     vk_destroy_dsl(gpu->dsl);
     vk_destroy_dp(gpu->dp);
+    vk_destroy_sampler(gpu->sampler);
     
     for(u32 i=0; i < gpu->sc.img_cnt; ++i)
         vk_destroy_imgv(gpu->sc.views[i]);

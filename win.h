@@ -33,7 +33,8 @@ struct keyboard_input {
 
 struct win {
     SDL_Window *handle;
-    struct rect_u32 dim;
+    struct extent_u16 dim;
+    struct extent_f32 rdim; // reciprocal of dim
     
     struct {
         u16 write,read; // buffer cursors

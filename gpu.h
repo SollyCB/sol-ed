@@ -71,7 +71,10 @@ struct gpu {
     } glyph[CHT_SZ];
     
     struct {
-        struct rect_u32 dim; // dimensions of a character cell
+        struct extent_u16 dim_px; // pixel dimensions of a character cell
+        struct extent_u16 win_dim_cells; // window dimensions in cells
+        struct extent_f32 rdim_px; // reciprocals
+        struct extent_f32 rwin_dim_cells;
         u32 cnt;
     } cell;
     
@@ -100,10 +103,10 @@ struct gpu {
     VkSampler sampler;
     
     struct draw_buffer { // size == gpu.cell.cnt
+        large_set_t occupado;
         struct draw_info {
-            struct { u16 x,y; } ofs;
-            struct { u16 x,y; } scl;
-            u8 fg[4],bg[4];
+            struct rect_u16 pd;
+            struct rgba fg,bg;
         } *di;
         u32 used;
     } db;
@@ -184,9 +187,9 @@ union gpu_memreq_info {
 //   - x,y,z: rgb color
 //   - w: char index
 struct gpu_cell_data {
-    u16 pd[4];
-    u8 fg[4];
-    u8 bg[4];
+    struct rect_u16 pd;
+    struct rgba fg;
+    struct rgba bg;
 };
 
 enum cell_vertex_fmts {

@@ -29,6 +29,8 @@ def_create_win(create_win)
 {
     win->dim.w = 640;
     win->dim.h = 480;
+    win->rdim.w = 1.0f / 640;
+    win->rdim.h = 1.0f / 480;
     win->handle = SDL_CreateWindow("Window Title",
                                    SDL_WINDOWPOS_CENTERED,
                                    SDL_WINDOWPOS_CENTERED,
