@@ -62,6 +62,7 @@ enum {
     VDT_ResetCommandPool,
     VDT_FreeCommandBuffers,
     VDT_CmdPipelineBarrier2,
+    VDT_CmdCopyBuffer,
     VDT_CmdCopyBufferToImage,
     
     VDT_DEV_END,
@@ -332,6 +333,10 @@ static inline void vk_cmd_copy_buf_to_img(VkCommandBuffer cmd, VkBuffer buf, VkI
         .imageExtent = {.width = w, .height = h, .depth = 1},
     };
     vdt_call(CmdCopyBufferToImage)(cmd, buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+}
+
+static inline void vk_cmd_bufcpy(VkCommandBuffer cmd, u32 cnt, VkBufferCopy *regs, VkBuffer from, VkBuffer to) {
+    vdt_call(CmdCopyBuffer)(cmd, from, to, cnt, regs);
 }
 
 def_cvk(cvk_fn)

@@ -106,15 +106,16 @@ def_prg_update(prg_update)
     
     /* window */
     win_poll();
+    gpu_update();
     
     bool got_input = false;
     
     switch(win->flags & WIN_SZ) {
-        case 0: break;
         
+        case 0:
         case WIN_MAX:
         case WIN_RSZ: {
-            gpu_handle_win_resize();
+            gpu_update();
             win->flags &= ~WIN_SZ;
         } break;
         
@@ -133,6 +134,7 @@ def_prg_update(prg_update)
         invalid_default_case;
     }
     
+    // input
     struct keyboard_input ki;
     while(win_kb_next(&ki)) { // @Todo
         got_input = true;

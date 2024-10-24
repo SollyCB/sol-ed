@@ -55,6 +55,7 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_ResetCommandPool] = {.name = "vkResetCommandPool"},
     [VDT_FreeCommandBuffers] = {.name = "vkFreeCommandBuffers"},
     [VDT_CmdPipelineBarrier2] = {.name = "vkCmdPipelineBarrier2"},
+    [VDT_CmdCopyBuffer] = {.name = "vkCmdCopyBuffer"},
     [VDT_CmdCopyBufferToImage] = {.name = "vkCmdCopyBufferToImage"},
 };
 #else

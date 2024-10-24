@@ -11,6 +11,14 @@
 
 #define GPU_MAX_CMDS 16
 
+enum gpu_flags {
+    GPU_MEM_INI = 0x01, // mem.type is valid
+    GPU_MEM_UNI = 0x02, // mem arch is unified
+    GPU_MEM_OFS = 0x04, // buffers use the top half this frame
+    
+    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI,
+};
+
 enum gpu_mem_indices {
     GPU_MI_G,
     GPU_MI_T,
@@ -121,8 +129,8 @@ def_create_gpu(create_gpu);
 #define def_gpu_create_sh(name) int name(void)
 def_gpu_create_sh(gpu_create_sh);
 
-#define def_gpu_handle_win_resize(name) int name(void)
-def_gpu_handle_win_resize(gpu_handle_win_resize);
+#define def_gpu_update(name) int name(void)
+def_gpu_update(gpu_update);
 
 #define def_gpu_check_leaks(name) void name(void)
 def_gpu_check_leaks(gpu_check_leaks);
@@ -130,12 +138,8 @@ def_gpu_check_leaks(gpu_check_leaks);
 /**********************************************************************/
 // gpu.c and vdt.c helper stuff
 
-enum gpu_flags {
-    GPU_MEM_INI = 0x01, // mem.type is valid
-    GPU_MEM_UNI = 0x02, // mem arch is unified
-    
-    GPU_MEM_BITS = GPU_MEM_INI|GPU_MEM_UNI,
-};
+// TODO(SollyCB): I would REALLY like to have a way to define typesafe
+// integers...
 
 enum gpu_cmd_opt {
     GPU_CMD_OT = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -146,50 +150,12 @@ enum gpu_cmd_opt {
 enum gpu_cmdq_indices {
     GPU_CI_G,
     GPU_CI_T,
-    GPU_CMDQ_CNT
-};
-
-// map queues that can be submitted to to regular queue index
-internal u32 gpu_ci_to_qi[] = {
-    [GPU_CI_G] = GPU_QI_G,
-    [GPU_CI_T] = GPU_QI_T,
-};
-#define gpu_cmd(ci) gpu->q[gpu_ci_to_qi[ci]].cmd
-
-internal char *gpu_cmdq_names[] = {
-    [GPU_CI_G] = "Graphics",
-    [GPU_CI_T] = "Transfer",
-};
-#define gpu_cmd_name(ci) gpu_cmdq_names[ci]
-
-internal u32 gpu_bi_to_mi[GPU_BUF_CNT] = {
-    [GPU_BI_G] = GPU_MI_G,
-    [GPU_BI_T] = GPU_MI_T,
-};
-
-internal char* gpu_mem_names[GPU_MEM_CNT] = {
-    [GPU_MI_G] = "Vertex",
-    [GPU_MI_T] = "Transfer",
-    [GPU_MI_I] = "Image",
+    GPU_CMD_CNT
 };
 
 union gpu_memreq_info {
     VkBufferCreateInfo *buf;
     VkImageCreateInfo *img;
-};
-
-// pd:
-//   - x,y: offsets from the top left corner of the screen
-//   - z,w: x and y scalars (1 is the width or height of the screen)
-// fg:
-//   - x,y,z,w: rgba color
-// bg:
-//   - x,y,z: rgb color
-//   - w: char index
-struct gpu_cell_data {
-    struct rect_u16 pd;
-    struct rgba fg;
-    struct rgba bg;
 };
 
 enum cell_vertex_fmts {
@@ -198,6 +164,15 @@ enum cell_vertex_fmts {
     CELL_BG_FMT = VK_FORMAT_R8G8B8A8_UNORM,
     CELL_GL_FMT = VK_FORMAT_R8_UNORM,
 };
+
+extern u32 gpu_bi_to_mi[GPU_BUF_CNT];
+extern u32 gpu_ci_to_qi[GPU_CMD_CNT];
+extern char* gpu_mem_names[GPU_MEM_CNT];
+extern char *gpu_cmdq_names[GPU_CMD_CNT];
+
+#define gpu_buf_name(bi) gpu_mem_names[gpu_bi_to_mi[bi]]
+#define gpu_cmd_name(ci) gpu_cmdq_names[ci]
+#define gpu_cmd(ci) gpu->q[gpu_ci_to_qi[ci]].cmd
 
 // calculate the size in bytes of the draw buffer
 #define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)
