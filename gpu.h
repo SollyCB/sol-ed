@@ -92,6 +92,7 @@ struct gpu {
         VkImage imgs[SC_MAX_IMGS];
         VkImageView views[SC_MAX_IMGS];
         u32 img_cnt;
+        u32 i; // current acquired image
     } sc;
     
     struct {

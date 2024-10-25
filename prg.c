@@ -112,10 +112,10 @@ def_prg_update(prg_update)
     
     switch(win->flags & WIN_SZ) {
         
-        case 0:
+        case 0: break;
+        
         case WIN_MAX:
         case WIN_RSZ: {
-            gpu_update();
             win->flags &= ~WIN_SZ;
         } break;
         

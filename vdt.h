@@ -64,6 +64,14 @@ enum {
     VDT_CmdPipelineBarrier2,
     VDT_CmdCopyBuffer,
     VDT_CmdCopyBufferToImage,
+    VDT_CmdBeginRenderPass2,
+    VDT_CmdBindPipeline,
+    VDT_CmdBindDescriptorSets,
+    VDT_CmdBindVertexBuffers,
+    VDT_CmdDraw,
+    VDT_CmdEndRenderPass,
+    VDT_CmdSetViewport,
+    VDT_CmdSetScissor,
     
     VDT_DEV_END,
     
@@ -337,6 +345,38 @@ static inline void vk_cmd_copy_buf_to_img(VkCommandBuffer cmd, VkBuffer buf, VkI
 
 static inline void vk_cmd_bufcpy(VkCommandBuffer cmd, u32 cnt, VkBufferCopy *regs, VkBuffer from, VkBuffer to) {
     vdt_call(CmdCopyBuffer)(cmd, from, to, cnt, regs);
+}
+
+static inline void vk_cmd_begin_rp(VkCommandBuffer cmd, VkRenderPassBeginInfo *rbi, VkSubpassBeginInfo *sbi) {
+    vdt_call(CmdBeginRenderPass2)(cmd, rbi, sbi);
+}
+
+static inline void vk_cmd_bind_pl(VkCommandBuffer cmd, VkPipelineBindPoint bp, VkPipeline pl) {
+    vdt_call(CmdBindPipeline)(cmd, bp, pl);
+}
+
+static inline void vk_cmd_bind_ds(VkCommandBuffer cmd, VkPipelineBindPoint bp, VkPipelineLayout pll, u32 first, u32 cnt, VkDescriptorSet *ds) {
+    vdt_call(CmdBindDescriptorSets)(cmd, bp, pll, first, cnt, ds, 0, NULL);
+}
+
+static inline void vk_cmd_bind_vb(VkCommandBuffer cmd, u32 first, u32 cnt, VkBuffer *bufs, u64 *ofs) {
+    vdt_call(CmdBindVertexBuffers)(cmd, first, cnt, bufs, ofs);
+}
+
+static inline void vk_cmd_draw(VkCommandBuffer cmd, u32 vcnt, u32 icnt) {
+    vdt_call(CmdDraw)(cmd, vcnt, icnt, 0, 0);
+}
+
+static inline void vk_cmd_end_rp(VkCommandBuffer cmd) {
+    vdt_call(CmdEndRenderPass)(cmd);
+}
+
+static inline void vk_cmd_set_viewport(VkCommandBuffer cmd, u32 first, u32 cnt, VkViewport *vp) {
+    vdt_call(CmdSetViewport)(cmd, first, cnt, vp);
+}
+
+static inline void vk_cmd_set_scissor(VkCommandBuffer cmd, u32 first, u32 cnt, VkRect2D *s) {
+    vdt_call(CmdSetScissor)(cmd, first, cnt, s);
 }
 
 def_cvk(cvk_fn)

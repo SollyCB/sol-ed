@@ -92,7 +92,7 @@ internal u64 gpu_buf_alloc(u32 bi, u64 sz)
     return gpu->buf[bi].used - sz;
 }
 
-internal int gpu_bufcpy(VkCommandBuffer cmd, u64 ofs, u64 sz, u32 bi_from, u32 bi_to)
+internal u64 gpu_bufcpy(VkCommandBuffer cmd, u64 ofs, u64 sz, u32 bi_from, u32 bi_to)
 {
     VkBufferCopy r;
     r.size = sz;
@@ -102,11 +102,11 @@ internal int gpu_bufcpy(VkCommandBuffer cmd, u64 ofs, u64 sz, u32 bi_from, u32 b
     if (r.dstOffset == Max_u64) {
         log_error("Failed to copy %u bytes from buffer %u (%s) to buffer %u (%s)",
                   sz, bi_from, gpu_buf_name(bi_from), bi_to, gpu_buf_name(bi_to));
-        return -1;
+        return Max_u64;
     }
     
     vk_cmd_bufcpy(cmd, 1, &r, gpu->buf[bi_from].handle, gpu->buf[bi_to].handle);
-    return 0;
+    return r.dstOffset;
 }
 
 internal u32 gpu_alloc_cmds(u32 ci, u32 cnt)
@@ -1093,23 +1093,28 @@ internal int gpu_db_flush(void)
             vk_begin_cmd(cmd[i], GPU_CMD_OT);
     }
     
+    u64 ofs;
     u64 sz = sizeof(*gpu->db.di) * gpu->db.used;
     if (gpu->flags & GPU_MEM_UNI) {
-        u64 ofs = gpu_buf_alloc(GPU_BI_G, sz);
+        ofs = gpu_buf_alloc(GPU_BI_G, sz);
         if (ofs == Max_u64) {
             dbg_strcpy(CLSTR(msg), STR("unified memory architecture"));
             goto bufcpy_fail;
         }
         memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, gpu->db.di, sz);
     } else if (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i) {
-        u64 ofs = gpu_buf_alloc(GPU_BI_T, sz);
+        dbg_strcpy(CLSTR(msg), STR("non-discrete transfer"));
+        
+        ofs = gpu_buf_alloc(GPU_BI_G, sz);
         if (ofs == Max_u64) {
-            dbg_strcpy(CLSTR(msg), STR("non-discrete transfer"));
             goto bufcpy_fail;
         }
         
-        memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, gpu->db.di, sz);
-        gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        ofs = gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
         
         VkMemoryBarrier2 barr = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         barr.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -1124,14 +1129,17 @@ internal int gpu_db_flush(void)
         vk_cmd_pl_barr(cmd[GPU_CI_G], &dep);
         vk_end_cmd(cmd[GPU_CI_T]);
     } else {
-        u64 ofs = gpu_buf_alloc(GPU_BI_T, sz);
-        if (ofs == Max_u64) {
-            dbg_strcpy(CLSTR(msg), STR("discrete transfer"));
-            goto bufcpy_fail;
-        }
+        dbg_strcpy(CLSTR(msg), STR("discrete transfer"));
         
-        memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, gpu->db.di, sz);
-        gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        ofs = gpu_buf_alloc(GPU_BI_T, sz);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        ofs = gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
         
         VkMemoryBarrier2 barr[GPU_CMD_CNT] = {
             [GPU_CI_T] = {
@@ -1164,13 +1172,57 @@ internal int gpu_db_flush(void)
         vk_end_cmd(cmd[GPU_CI_T]);
     }
     
-    VkCommandBuffer cmd = cmd[GPU_CI_G];
-    vk_cmd_begin_rp();
-    vk_cmd_bind_pl(cmd);
-    vk_cmd_bind_ds(cmd);
-    vk_cmd_bind_vb(cmd, ofs);
-    vk_cmd_draw(cmd, 6, gpu->db.cnt);
-    vk_cmd_end_rp();
+    VkRect2D ra;
+    memset(&ra.offset, 0x7f, sizeof(ra.offset));
+    memset(&ra.extent, 0x00, sizeof(ra.extent));
+    for(u32 i=0; i < gpu->db.used; ++i) {
+        if (gpu->db.di[i].pd.ofs.x < ra.offset.x)
+            ra.offset.x = gpu->db.di[i].pd.ofs.x;
+        if (gpu->db.di[i].pd.ofs.y < ra.offset.y)
+            ra.offset.y = gpu->db.di[i].pd.ofs.y;
+        if (gpu->db.di[i].pd.ext.w > ra.extent.width)
+            ra.extent.width = gpu->db.di[i].pd.ext.w;
+        if (gpu->db.di[i].pd.ext.h > ra.extent.height)
+            ra.extent.height = gpu->db.di[i].pd.ext.h;
+    }
+    
+    ra.offset.x = (s32)floorf((f32)ra.offset.x / 65535 * win->dim.w);
+    ra.offset.y = (s32)floorf((f32)ra.offset.y / 65535 * win->dim.h);
+    ra.extent.width = (s32)ceilf((f32)ra.extent.width / 65535 * win->dim.w);
+    ra.extent.height = (s32)ceilf((f32)ra.extent.height / 65535 * win->dim.h);
+    
+    VkClearValue cv = {.color = {.float32 = {0,0,0,1}}};
+    
+    VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rbi.renderPass = gpu->rp;
+    rbi.framebuffer = gpu->fb[gpu->sc.i];
+    rbi.renderArea = ra;
+    rbi.clearValueCount = 1;
+    rbi.pClearValues = &cv;
+    
+    VkSubpassBeginInfo sbi = {
+        .sType = VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO,
+        .contents = VK_SUBPASS_CONTENTS_INLINE,
+    };
+    
+    VkViewport vp;
+    vp.x = (f32)ra.offset.x;
+    vp.y = (f32)ra.offset.y;
+    vp.width = (f32)ra.extent.width;
+    vp.height = (f32)ra.extent.height;
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    
+    VkCommandBuffer gcmd = cmd[GPU_CI_G];
+    vk_cmd_begin_rp(gcmd, &rbi, &sbi);
+    vk_cmd_bind_pl(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pl);
+    vk_cmd_set_viewport(gcmd, 0, 1, &vp);
+    vk_cmd_set_scissor(gcmd, 0, 1, &ra);
+    vk_cmd_bind_ds(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pll, 0, 1, &gpu->ds);
+    vk_cmd_bind_vb(gcmd, 0, 1, &gpu->buf[GPU_BI_G].handle, &ofs);
+    vk_cmd_draw(gcmd, 6, gpu->db.used);
+    vk_cmd_end_rp(gcmd);
+    vk_end_cmd(gcmd);
     
     return 0;
     
@@ -1560,6 +1612,7 @@ def_gpu_update(gpu_update)
             gpu->flags &= ~GPU_MEM_OFS;
         }
     }
+    return 0;
 }
 
 def_gpu_check_leaks(gpu_check_leaks)

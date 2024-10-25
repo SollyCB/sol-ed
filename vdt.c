@@ -57,6 +57,14 @@ struct vdt_elem exevdt[VDT_SIZE] = {
     [VDT_CmdPipelineBarrier2] = {.name = "vkCmdPipelineBarrier2"},
     [VDT_CmdCopyBuffer] = {.name = "vkCmdCopyBuffer"},
     [VDT_CmdCopyBufferToImage] = {.name = "vkCmdCopyBufferToImage"},
+    [VDT_CmdBeginRenderPass2] = {.name = "vkCmdBeginRenderPass2"},
+    [VDT_CmdBindPipeline] = {.name = "vkCmdBindPipeline"},
+    [VDT_CmdBindDescriptorSets] = {.name = "vkCmdBindDescriptorSets"},
+    [VDT_CmdBindVertexBuffers] = {.name = "vkCmdBindVertexBuffers"},
+    [VDT_CmdDraw] = {.name = "vkCmdDraw"},
+    [VDT_CmdEndRenderPass] = {.name = "vkCmdEndRenderPass"},
+    [VDT_CmdSetViewport] = {.name = "vkCmdSetViewport"},
+    [VDT_CmdSetScissor] = {.name = "vkCmdSetScissor"},
 };
 #else
 struct vdt *vdt;
