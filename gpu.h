@@ -8,6 +8,15 @@
 
 #define SC_MAX_IMGS 4 /* Arbitrarily small size that I doubt will be exceeded */
 #define SC_MIN_IMGS 2
+#define FRAME_WRAP 2
+
+extern u32 frm_i;
+
+enum {
+    DB_SI_T, // transfer complete
+    DB_SI_G, // color output complete
+    DB_SEM_CNT,
+};
 
 #define GPU_MAX_CMDS 16
 
@@ -57,7 +66,7 @@ struct gpu {
             u32 buf_cnt;
             VkCommandPool pool;
             VkCommandBuffer bufs[GPU_MAX_CMDS];
-        } cmd;
+        } cmd[FRAME_WRAP];
     } q[GPU_Q_CNT];
     
     struct {
@@ -91,8 +100,9 @@ struct gpu {
         VkSwapchainCreateInfoKHR info;
         VkImage imgs[SC_MAX_IMGS];
         VkImageView views[SC_MAX_IMGS];
-        u32 img_cnt;
-        u32 i; // current acquired image
+        VkSemaphore sem[SC_MAX_IMGS];
+        u32 img_i[SC_MAX_IMGS];
+        u32 img_cnt,i;
     } sc;
     
     struct {
@@ -112,12 +122,14 @@ struct gpu {
     VkSampler sampler;
     
     struct draw_buffer { // size == gpu.cell.cnt
+        VkSemaphore sem[DB_SEM_CNT];
+        VkFence fence[FRAME_WRAP];
         large_set_t occupado;
         struct draw_info {
             struct rect_u16 pd;
             struct rgba fg,bg;
         } *di;
-        u32 used;
+        u32 used,in_use_fences; // bit mask for fences that can be waited on
     } db;
 };
 
@@ -173,7 +185,7 @@ extern char *gpu_cmdq_names[GPU_CMD_CNT];
 
 #define gpu_buf_name(bi) gpu_mem_names[gpu_bi_to_mi[bi]]
 #define gpu_cmd_name(ci) gpu_cmdq_names[ci]
-#define gpu_cmd(ci) gpu->q[gpu_ci_to_qi[ci]].cmd
+#define gpu_cmd(ci) gpu->q[gpu_ci_to_qi[ci]].cmd[frm_i]
 
 // calculate the size in bytes of the draw buffer
 #define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)

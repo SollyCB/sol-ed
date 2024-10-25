@@ -4,24 +4,29 @@
 #include "gpu.h"
 
 enum {
-    // Instance API
+    /* Instance API */
     VDT_EnumeratePhysicalDevices,
     VDT_GetPhysicalDeviceProperties,
     VDT_GetPhysicalDeviceMemoryProperties,
     VDT_GetPhysicalDeviceQueueFamilyProperties,
     VDT_GetPhysicalDeviceSurfaceSupportKHR,
-    VDT_CreateDevice,
     VDT_GetPhysicalDeviceSurfaceCapabilitiesKHR,
     VDT_GetPhysicalDeviceSurfaceFormatsKHR,
     VDT_GetPhysicalDeviceSurfacePresentModesKHR,
+    VDT_CreateDevice,
     
     VDT_INST_END,
     
-    // Device API
-    VDT_GetDeviceQueue,
+    /* Device API */
+    
+    // Swapchain
     VDT_CreateSwapchainKHR,
     VDT_DestroySwapchainKHR,
     VDT_GetSwapchainImagesKHR,
+    VDT_AcquireNextImageKHR,
+    VDT_QueuePresentKHR,
+    
+    // Memory
     VDT_CreateBuffer,
     VDT_DestroyBuffer,
     VDT_CreateImage,
@@ -33,27 +38,42 @@ enum {
     VDT_FreeMemory,
     VDT_BindBufferMemory,
     VDT_BindImageMemory,
+    
+    // Shader
     VDT_CreateImageView,
     VDT_DestroyImageView,
     VDT_CreateSampler,
     VDT_DestroySampler,
     VDT_CreateShaderModule,
     VDT_DestroyShaderModule,
+    
+    // Descriptor
     VDT_CreateDescriptorSetLayout,
     VDT_DestroyDescriptorSetLayout,
     VDT_CreatePipelineLayout,
     VDT_DestroyPipelineLayout,
     VDT_CreateDescriptorPool,
     VDT_DestroyDescriptorPool,
+    VDT_ResetDescriptorPool,
     VDT_AllocateDescriptorSets,
     VDT_UpdateDescriptorSets,
+    
+    // Pipeline
     VDT_CreateRenderPass,
     VDT_DestroyRenderPass,
     VDT_CreateFramebuffer,
     VDT_DestroyFramebuffer,
     VDT_CreateGraphicsPipelines,
     VDT_DestroyPipeline,
+    VDT_CreateSemaphore,
+    VDT_DestroySemaphore,
+    VDT_CreateFence,
+    VDT_DestroyFence,
+    VDT_WaitForFences,
+    VDT_ResetFences,
+    VDT_GetFenceStatus,
     
+    // Command
     VDT_CreateCommandPool,
     VDT_DestroyCommandPool,
     VDT_AllocateCommandBuffers,
@@ -61,6 +81,8 @@ enum {
     VDT_EndCommandBuffer,
     VDT_ResetCommandPool,
     VDT_FreeCommandBuffers,
+    
+    // Cmd
     VDT_CmdPipelineBarrier2,
     VDT_CmdCopyBuffer,
     VDT_CmdCopyBufferToImage,
@@ -72,6 +94,10 @@ enum {
     VDT_CmdEndRenderPass,
     VDT_CmdSetViewport,
     VDT_CmdSetScissor,
+    
+    // Queue
+    VDT_GetDeviceQueue,
+    VDT_QueueSubmit,
     
     VDT_DEV_END,
     
@@ -149,10 +175,6 @@ static inline void vk_get_phys_dev_surf_fmts_khr(u32 *cnt, VkSurfaceFormatKHR *f
     vdt_call(GetPhysicalDeviceSurfaceFormatsKHR)(gpu->phys_dev, gpu->surf, cnt, fmts);
 }
 
-static inline void vk_get_devq(u32 qi, VkQueue *qh) {
-    vdt_call(GetDeviceQueue)(gpu->dev, qi, 0, qh);
-}
-
 static inline VkResult vk_create_sc_khr(VkSwapchainCreateInfoKHR *ci, VkSwapchainKHR *sc) {
     return cvk(vdt_call(CreateSwapchainKHR)(gpu->dev, ci, GAC, sc));
 }
@@ -163,6 +185,14 @@ static inline void vk_destroy_sc_khr(VkSwapchainKHR sc) {
 
 static inline VkResult vk_get_sc_imgs_khr(u32 *cnt, VkImage *imgs) {
     return cvk(vdt_call(GetSwapchainImagesKHR)(gpu->dev, gpu->sc.handle, cnt, imgs));
+}
+
+static inline VkResult vk_acquire_img_khr(VkSemaphore s, VkFence f, u32 *i) {
+    return vdt_call(AcquireNextImageKHR)(gpu->dev, gpu->sc.handle, secs_to_ns(1), s, f, i);
+}
+
+static inline VkResult vk_qpres(VkPresentInfoKHR *pi) {
+    return vdt_call(QueuePresentKHR)(gpu->q[GPU_QI_P].handle, pi);
 }
 
 static inline VkResult vk_create_buf(VkBufferCreateInfo *ci, VkBuffer *buf) {
@@ -257,6 +287,10 @@ static inline void vk_destroy_dp(VkDescriptorPool dp) {
     vdt_call(DestroyDescriptorPool)(gpu->dev, dp, GAC);
 }
 
+static inline void vk_reset_dp(VkDescriptorPool dp) {
+    vdt_call(ResetDescriptorPool)(gpu->dev, dp, 0x0);
+}
+
 static inline VkResult vk_alloc_ds(VkDescriptorSetAllocateInfo *ai, VkDescriptorSet *ds) {
     return cvk(vdt_call(AllocateDescriptorSets)(gpu->dev, ai, ds));
 }
@@ -287,6 +321,39 @@ static inline VkResult vk_create_gpl(u32 cnt, VkGraphicsPipelineCreateInfo *ci, 
 
 static inline void vk_destroy_pl(VkPipeline pl) {
     vdt_call(DestroyPipeline)(gpu->dev, pl, GAC);
+}
+
+static inline VkResult vk_create_sem(VkSemaphore *sem) {
+    VkSemaphoreCreateInfo ci = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+    return cvk(vdt_call(CreateSemaphore)(gpu->dev, &ci, GAC, sem));
+}
+
+static inline void vk_destroy_sem(VkSemaphore sem) {
+    vdt_call(DestroySemaphore)(gpu->dev, sem, GAC);
+}
+
+static inline VkResult vk_create_fence(bool signalled, VkFence *fence) {
+    VkFenceCreateInfo ci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    ci.flags = signalled;
+    return cvk(vdt_call(CreateFence)(gpu->dev, &ci, GAC, fence));
+}
+
+static inline void vk_destroy_fence(VkFence fence) {
+    vdt_call(DestroyFence)(gpu->dev, fence, GAC);
+}
+
+static inline void vk_await_fences(u32 cnt, VkFence *fences, bool await_all) {
+    // Deliberately ignoring the result
+    cvk(vdt_call(WaitForFences)(gpu->dev, cnt, fences, await_all, secs_to_ns(3)));
+}
+
+static inline VkResult vk_fence_status(VkFence f) {
+    return vdt_call(GetFenceStatus)(gpu->dev, f);
+}
+
+static inline void vk_reset_fences(u32 cnt, VkFence *fences) {
+    // Deliberately ignoring the result
+    cvk(vdt_call(ResetFences)(gpu->dev, cnt, fences));
 }
 
 static inline VkResult vk_create_cmdpool(VkCommandPoolCreateInfo *ci, VkCommandPool *pool) {
@@ -377,6 +444,14 @@ static inline void vk_cmd_set_viewport(VkCommandBuffer cmd, u32 first, u32 cnt, 
 
 static inline void vk_cmd_set_scissor(VkCommandBuffer cmd, u32 first, u32 cnt, VkRect2D *s) {
     vdt_call(CmdSetScissor)(cmd, first, cnt, s);
+}
+
+static inline void vk_get_devq(u32 qi, VkQueue *qh) {
+    vdt_call(GetDeviceQueue)(gpu->dev, qi, 0, qh);
+}
+
+static inline VkResult vk_qsub(VkQueue q, u32 cnt, VkSubmitInfo *si, VkFence fence) {
+    return cvk(vdt_call(QueueSubmit)(q, cnt, si, fence));
 }
 
 def_cvk(cvk_fn)

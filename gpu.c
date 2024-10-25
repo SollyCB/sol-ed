@@ -8,6 +8,8 @@
 
 struct gpu *gpu;
 
+u32 frm_i = 0;
+
 u32 gpu_bi_to_mi[GPU_BUF_CNT] = {
     [GPU_BI_G] = GPU_MI_G,
     [GPU_BI_T] = GPU_MI_T,
@@ -133,8 +135,56 @@ internal void gpu_dealloc_cmds(u32 ci)
     gpu_cmd(ci).buf_cnt = 0;
 }
 
+internal void gpu_db_await_fence(u32 i)
+{
+    vk_await_fences(1, &gpu->db.fence[i], true);
+}
+
+internal void gpu_db_reset_fence(u32 i)
+{
+    vk_reset_fences(1, &gpu->db.fence[i]);
+    gpu->db.in_use_fences &= ~(1<<i);
+}
+
+internal void gpu_db_await_and_reset_in_use_fences(void)
+{
+    VkFence f[FRAME_WRAP];
+    u32 cnt,i;
+    for_bits(i, cnt, gpu->db.in_use_fences)
+        f[cnt] = gpu->db.fence[i];
+    vk_await_fences(cnt, f, true);
+    vk_reset_fences(cnt, f);
+}
+
 internal int gpu_create_mem(void)
 {
+    if (gpu->db.sem[0] == VK_NULL_HANDLE) { // runs once per program
+        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
+            if (vk_create_sem(&gpu->db.sem[i])) {
+                log_error("Failed to create draw buffer semaphore %u", i);
+                while(--i < Max_u32)
+                    vk_destroy_sem(gpu->db.sem[i]);
+                return -1;
+            }
+        }
+    }
+    if (gpu->sampler == VK_NULL_HANDLE) { // runs once per program
+        VkSamplerCreateInfo ci = {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_NEAREST,
+            .minFilter = VK_FILTER_NEAREST,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .minLod = 0,
+            .maxLod = VK_LOD_CLAMP_NONE,
+            .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+        };
+        if (vk_create_sampler(&ci, &gpu->sampler))
+            return -1;
+    }
+    
     local_persist VkImageCreateInfo ici = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -160,7 +210,7 @@ internal int gpu_create_mem(void)
         },
     };
     
-    if (!(gpu->flags & GPU_MEM_INI)) {
+    if ((gpu->flags & GPU_MEM_INI) == false) { // runs once per program
         if (gpu->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
             gpu->flags |= GPU_MEM_UNI;
         
@@ -203,9 +253,16 @@ internal int gpu_create_mem(void)
                     .queueFamilyIndex = gpu->q[GPU_QI_T].i,
                 },
             };
-            for(u32 i=0; i < GPU_CMD_CNT; ++i) {
-                if (vk_create_cmdpool(&ci[i], &gpu_cmd(i).pool))
-                    return -1;
+            for(u32 j=0; j < FRAME_WRAP; ++j) {
+                for(u32 i=0; i < GPU_CMD_CNT; ++i) {
+                    if (vk_create_cmdpool(&ci[i], &gpu->q[i].cmd[j].pool)) {
+                        do {
+                            while(--i < Max_u32)
+                                vk_destroy_cmdpool(gpu->q[i].cmd[j].pool);
+                        } while(--j < Max_u32);
+                        return -1;
+                    }
+                }
             }
         } else {
             VkCommandPoolCreateInfo ci = {
@@ -225,29 +282,21 @@ internal int gpu_create_mem(void)
         gpu->flags |= GPU_MEM_INI;
     }
     
-    if (gpu->sampler == VK_NULL_HANDLE) {
-        VkSamplerCreateInfo ci = {
-            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter = VK_FILTER_NEAREST,
-            .minFilter = VK_FILTER_NEAREST,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .minLod = 0,
-            .maxLod = VK_LOD_CLAMP_NONE,
-            .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-        };
-        if (vk_create_sampler(&ci, &gpu->sampler))
+    // fence state is a headache
+    for(u32 i=0; i < cl_array_size(gpu->db.fence); ++i) {
+        if (gpu->db.fence[i])
+            vk_destroy_fence(gpu->db.fence[i]);
+        if (vk_create_fence(true, &gpu->db.fence[i])) {
+            log_error("Failed to create draw buffer fence %u", i);
+            while(--i < Max_u32)
+                vk_destroy_fence(gpu->db.fence[i]);
+            memset(gpu->db.fence, 0, sizeof(gpu->db.fence));
             return -1;
+        }
     }
     
     VkCommandBuffer cmd[GPU_CMD_CNT];
     if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
-        for(u32 i=0; i < GPU_CMD_CNT; ++i) {
-            vk_reset_cmdpool(gpu_cmd(i).pool, GPU_CMD_RE);
-            gpu_dealloc_cmds(i);
-        }
         for(u32 i=0; i < GPU_CMD_CNT; ++i) {
             u32 ci = gpu_alloc_cmds(i, 1); 
             if (ci == Max_u32) {
@@ -257,8 +306,6 @@ internal int gpu_create_mem(void)
             cmd[i] = gpu_cmd(i).bufs[ci];
         }
     } else {
-        vk_reset_cmdpool(gpu_cmd(GPU_CI_G).pool, GPU_CMD_RE);
-        gpu_dealloc_cmds(GPU_CI_G);
         u32 ci = gpu_alloc_cmds(GPU_QI_G, 1);
         if (ci == Max_u32) {
             log_error("Failed to allocate command buffer for uploading glyph (%s)", gpu_cmd_name(GPU_CI_G));
@@ -630,6 +677,25 @@ internal int gpu_create_sc(void)
 {
     char msg[128];
     
+    for(u32 i=0; i < cl_array_size(gpu->sc.sem); ++i) {
+        if (gpu->sc.sem[i])
+            vk_destroy_sem(gpu->sc.sem[i]);
+        
+        if (vk_create_sem(&gpu->sc.sem[i])) {
+            log_error("Failed to create swapchain semaphore %u (I would be very surprised if I ever hit this message)", i);
+            while(--i < Max_u32)
+                vk_destroy_sem(gpu->sc.sem[i]);
+            memset(gpu->sc.sem, 0, sizeof(gpu->sc.sem));
+            return -1;
+        }
+    }
+    
+    // NOTE(SollyCB): You have to call this or else you cannot resize to the window dimensions. Weird...
+    VkSurfaceCapabilitiesKHR cap;
+    vk_get_phys_dev_surf_cap_khr(&cap);
+    log_error_if(cap.currentExtent.width != win->dim.w || cap.currentExtent.height != win->dim.h,
+                 "Window dimensions do not match those reported by surface capabilities");
+    
     VkSwapchainCreateInfoKHR sc_info = gpu->sc.info;
     sc_info.imageExtent = (VkExtent2D) {.width = win->dim.w, .height = win->dim.h};
     
@@ -673,6 +739,7 @@ internal int gpu_create_sc(void)
     
     gpu->sc.info.oldSwapchain = gpu->sc.handle;
     gpu->sc.info.imageExtent = sc_info.imageExtent;
+    gpu->sc.i = 0;
     
     for(i=0; i < gpu->sc.img_cnt; ++i) {
         if (gpu->sc.views[i])
@@ -698,6 +765,34 @@ internal int gpu_create_sc(void)
     fail_sc:
     log_error("Swapchain creation failed - %s", msg);
     return -1;
+}
+
+internal int gpu_sc_next_img(void) {
+    gpu->sc.i = (gpu->sc.i + 1) % gpu->sc.img_cnt;
+    
+    while(true) {
+        VkResult res = vk_acquire_img_khr(gpu->sc.sem[gpu->sc.i], VK_NULL_HANDLE, &gpu->sc.img_i[gpu->sc.i]);
+        switch(res) {
+            case VK_SUCCESS:
+            case VK_SUBOPTIMAL_KHR:
+            return res;
+            
+            case VK_TIMEOUT:
+            case VK_NOT_READY:
+            os_sleep_ms(0);
+            break; // loop again
+            
+            case VK_ERROR_OUT_OF_HOST_MEMORY:
+            case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+            case VK_ERROR_DEVICE_LOST:
+            case VK_ERROR_OUT_OF_DATE_KHR:
+            case VK_ERROR_SURFACE_LOST_KHR:
+            case VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:
+            log_error("Swapchain image acquisition returned failure code");
+            return -1;
+        }
+    }
+    return 0;
 }
 
 internal VkShaderModule gpu_create_shader(struct string spv)
@@ -756,7 +851,7 @@ internal int gpu_create_pll(void)
 
 internal int gpu_create_ds(void)
 {
-    if (gpu->dp == VK_NULL_HANDLE) {
+    if (gpu->dp == VK_NULL_HANDLE) { // runs once per program
         local_persist VkDescriptorPoolSize sz = {
             .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             .descriptorCount = CHT_SZ,
@@ -772,13 +867,17 @@ internal int gpu_create_ds(void)
             return -1;
     }
     
+    vk_reset_dp(gpu->dp);
+    
     VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     ai.descriptorPool = gpu->dp;
     ai.descriptorSetCount = 1;
     ai.pSetLayouts = &gpu->dsl;
     
-    if (vk_alloc_ds(&ai, &gpu->ds) == 0)
+    if (vk_alloc_ds(&ai, &gpu->ds)) {
+        log_error("Failed to allocate descriptor sets");
         return -1;
+    }
     
     VkDescriptorImageInfo ii[CHT_SZ] = {
         {
@@ -1105,7 +1204,7 @@ internal int gpu_db_flush(void)
     } else if (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i) {
         dbg_strcpy(CLSTR(msg), STR("non-discrete transfer"));
         
-        ofs = gpu_buf_alloc(GPU_BI_G, sz);
+        ofs = gpu_buf_alloc(GPU_BI_T, sz);
         if (ofs == Max_u64) {
             goto bufcpy_fail;
         }
@@ -1127,7 +1226,6 @@ internal int gpu_db_flush(void)
         dep.pMemoryBarriers = &barr;
         
         vk_cmd_pl_barr(cmd[GPU_CI_G], &dep);
-        vk_end_cmd(cmd[GPU_CI_T]);
     } else {
         dbg_strcpy(CLSTR(msg), STR("discrete transfer"));
         
@@ -1135,7 +1233,7 @@ internal int gpu_db_flush(void)
         if (ofs == Max_u64)
             goto bufcpy_fail;
         
-        ofs = gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        ofs = gpu_bufcpy(cmd[GPU_CI_T], ofs, sz, GPU_BI_T, GPU_BI_G);
         if (ofs == Max_u64)
             goto bufcpy_fail;
         
@@ -1195,7 +1293,7 @@ internal int gpu_db_flush(void)
     
     VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rbi.renderPass = gpu->rp;
-    rbi.framebuffer = gpu->fb[gpu->sc.i];
+    rbi.framebuffer = gpu->fb[gpu->sc.img_i[gpu->sc.i]];
     rbi.renderArea = ra;
     rbi.clearValueCount = 1;
     rbi.pClearValues = &cv;
@@ -1224,6 +1322,64 @@ internal int gpu_db_flush(void)
     vk_cmd_end_rp(gcmd);
     vk_end_cmd(gcmd);
     
+    enum {WT,WS}; // wait vertex transfer, wait swapchain image acquire
+    VkSemaphore w_sem[] = {
+        [WS] = gpu->sc.sem[gpu->sc.i],
+        [WT] = gpu->db.sem[DB_SI_T]
+    };
+    VkPipelineStageFlags w_stg[] = {
+        [WS] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        [WT] = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+    };
+    
+    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &gcmd;
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores = &gpu->db.sem[DB_SI_G];
+    
+    if ((gpu->flags & GPU_MEM_UNI) || (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i)) {
+        si.pWaitDstStageMask = &w_stg[WS];
+        si.waitSemaphoreCount = 1;
+        si.pWaitSemaphores = &w_sem[WS];
+    } else {
+        si.pWaitDstStageMask = w_stg;
+        si.waitSemaphoreCount = cl_array_size(w_sem);
+        si.pWaitSemaphores = w_sem;
+        
+        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        tsi.commandBufferCount = 1;
+        tsi.pCommandBuffers = &cmd[GPU_CI_T];
+        tsi.signalSemaphoreCount = 1;
+        tsi.pSignalSemaphores = &gpu->db.sem[DB_SI_T];
+        
+        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
+            log_error("Failed to submit transfer commands while flushing draw buffer");
+            return -1;
+        }
+    }
+    
+    if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &si, gpu->db.fence[frm_i])) {
+        log_error("Failed to submit graphics commands while flushing draw buffer");
+        return -1;
+    }
+    gpu->db.in_use_fences |= 1 << frm_i;
+    
+    VkResult r;
+    VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &gpu->db.sem[DB_SI_G];
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &gpu->sc.handle;
+    pi.pImageIndices = &gpu->sc.img_i[gpu->sc.i];
+    pi.pResults = &r;
+    
+    if (vk_qpres(&pi)) {
+        println("QueuePresent was not VK_SUCCESS, requesting window resize");
+        win->flags |= WIN_RSZ;
+        return -1;
+    }
+    
     return 0;
     
     bufcpy_fail:
@@ -1234,6 +1390,7 @@ internal int gpu_db_flush(void)
 int gpu_handle_win_resize(void)
 {
     println("GPU handling resize");
+    
     if (gpu_create_sc()) {
         log_error("Failed to retire old swapchain, retrying from scratch...");
         if (gpu_create_sc()) {
@@ -1247,6 +1404,10 @@ int gpu_handle_win_resize(void)
     }
     if (gpu_create_mem()) {
         log_error("Failed to create memory objects on window resize");
+        return -1;
+    }
+    if (gpu_create_ds()) {
+        log_error("Failed to allocate descriptor sets after window resize");
         return -1;
     }
     return 0;
@@ -1487,20 +1648,6 @@ def_create_gpu(create_gpu)
     gpu_create_fb();
     gpu_create_pl();
     
-#if 1
-    {
-        struct rgba fg={},bg={};
-        struct rect_u16 r;
-        r.ofs.x = gpu->cell.dim_px.w * 5;
-        r.ofs.y = gpu->cell.dim_px.h * 5;
-        r.ext.w = gpu->cell.dim_px.w * 5;
-        r.ext.h = gpu->cell.dim_px.h * 5;
-        
-        gpu_db_add(r, fg, bg);
-        gpu_db_flush();
-    }
-#endif
-    
     return 0;
 }
 
@@ -1596,22 +1743,52 @@ def_gpu_create_sh(gpu_create_sh)
 def_gpu_update(gpu_update)
 {
     if (win->flags & WIN_RSZ) {
+        gpu_db_await_and_reset_in_use_fences(); // this is cooler than DeviceWaitIdle
         if (gpu_handle_win_resize()) {
             log_error("Failed to handle window resize");
             return -1;
         }
     }
+    
+    frm_i = (frm_i + 1) % FRAME_WRAP;
+    gpu_db_await_fence(frm_i);
+    
+    if (gpu_sc_next_img()) {
+        println("Gpu skipping frame as next swapchain image was not VK_SUCCESS");
+        return 0;
+    }
+    
+    gpu_db_reset_fence(frm_i);
+    
+    for(u32 i=0; i < GPU_CMD_CNT; ++i) {
+        vk_reset_cmdpool(gpu_cmd(i).pool, 0x0);
+        gpu_dealloc_cmds(i);
+    }
+    
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if ((gpu->flags & GPU_MEM_OFS) == false) {
             gpu->buf[i].used = 0;
-            gpu->buf[i].size <<= 1;
-            gpu->flags |= GPU_MEM_OFS;
+            gpu->buf[i].size >>= 1;
         } else {
             gpu->buf[i].used = gpu->buf[i].size;
-            gpu->buf[i].size >>= 1;
-            gpu->flags &= ~GPU_MEM_OFS;
+            gpu->buf[i].size <<= 1;
         }
     }
+    gpu->flags ^= GPU_MEM_OFS;
+    
+    {
+        struct rgba fg = {250, 0, 0, 255};
+        struct rgba bg = {0, 0, 250, 255};
+        struct rect_u16 r;
+        r.ofs.x = gpu->cell.dim_px.w * 5;
+        r.ofs.y = gpu->cell.dim_px.h * 5;
+        r.ext.w = gpu->cell.dim_px.w * 5;
+        r.ext.h = gpu->cell.dim_px.h * 5;
+        
+        gpu_db_add(r, fg, bg);
+        gpu_db_flush();
+    }
+    
     return 0;
 }
 
@@ -1620,10 +1797,18 @@ def_gpu_check_leaks(gpu_check_leaks)
     // @NOTE I am not necessarily trying to destroy everything,
     // just enough that the validation messages are parseable.
     
-    for(u32 i=0; i < GPU_CMD_CNT; ++i) {
-        gpu_dealloc_cmds(i);
-        vk_destroy_cmdpool(gpu_cmd(i).pool);
+    vkDeviceWaitIdle(gpu->dev);
+    
+    u32 tmp = frm_i;
+    frm_i = 0;
+    for(u32 j=0; j < FRAME_WRAP; ++j) {
+        for(u32 i=0; i < GPU_CMD_CNT; ++i) {
+            gpu_dealloc_cmds(i);
+            vk_destroy_cmdpool(gpu_cmd(i).pool);
+        }
+        frm_i++;
     }
+    frm_i = tmp;
     
     for(u32 i=0; i < CHT_SZ; ++i) {
         vk_destroy_img(gpu->glyph[i].img);
@@ -1644,12 +1829,19 @@ def_gpu_check_leaks(gpu_check_leaks)
     for(u32 i=0; i < gpu->sc.img_cnt; ++i)
         vk_destroy_fb(gpu->fb[i]);
     
+    for(u32 i=0; i < DB_SEM_CNT; ++i)
+        vk_destroy_sem(gpu->db.sem[i]);
+    for(u32 i=0; i < cl_array_size(gpu->db.fence); ++i)
+        vk_destroy_fence(gpu->db.fence[i]);
+    
     vk_destroy_dsl(gpu->dsl);
     vk_destroy_dp(gpu->dp);
     vk_destroy_sampler(gpu->sampler);
     
     for(u32 i=0; i < gpu->sc.img_cnt; ++i)
         vk_destroy_imgv(gpu->sc.views[i]);
+    for(u32 i=0; i < cl_array_size(gpu->sc.sem); ++i)
+        vk_destroy_sem(gpu->sc.sem[i]);
     vk_destroy_sc_khr(gpu->sc.info.oldSwapchain);
     
     vkDestroyDevice(gpu->dev, NULL);

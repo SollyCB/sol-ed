@@ -57,8 +57,10 @@ def_win_create_surf(win_create_surf)
 
 def_win_poll(win_poll)
 {
+    win->flags &= ~WIN_SZ;
+    
     SDL_Event e;
-    while(SDL_PollEvent(&e)) {
+    while(SDL_PollEvent(&e) || (win->flags & WIN_MIN)) {
         switch(e.type) {
             
             case SDL_QUIT:
@@ -94,6 +96,16 @@ def_win_poll(win_poll)
                     case SDL_WINDOWEVENT_MINIMIZED: {
                         win->flags &= ~WIN_SZ;
                         win->flags |= WIN_MIN;
+                        
+                        local_persist u32 pause_msg_timer = 0;
+                        if (pause_msg_timer == 0)
+                            pause_msg_timer = win_ms();
+                        
+                        if (pause_msg_timer < win_ms())
+                            pause_msg_timer += secs_to_ms(2);
+                        
+                        println("Paused while minimized");
+                        os_sleep_ms(0);
                     } break;
                     
                     case SDL_WINDOWEVENT_MAXIMIZED: {
@@ -115,6 +127,10 @@ def_win_poll(win_poll)
             break;
         }
     }
+    
+    if (win->flags & WIN_RSZ)
+        SDL_GetWindowSize(win->handle, (int*)&win->dim.w, (int*)&win->dim.h);
+    
     return 0;
 }
 

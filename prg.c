@@ -70,6 +70,11 @@ def_should_prg_reload(should_prg_reload)
 
 def_prg_update(prg_update)
 {
+    for(u32 i=0; i < cl_array_size(prg->allocs); ++i) {
+        reset_allocator(&prg->allocs[i].scratch);
+        reset_allocator(&prg->allocs[i].persist);
+    }
+    
     prg->frames.cnt++;
     
     /* timers */
@@ -106,33 +111,8 @@ def_prg_update(prg_update)
     
     /* window */
     win_poll();
-    gpu_update();
     
     bool got_input = false;
-    
-    switch(win->flags & WIN_SZ) {
-        
-        case 0: break;
-        
-        case WIN_MAX:
-        case WIN_RSZ: {
-            win->flags &= ~WIN_SZ;
-        } break;
-        
-        case WIN_MIN: {
-            local_persist u32 pause_msg_timer = 0;
-            if (pause_msg_timer == 0)
-                pause_msg_timer = win_ms();
-            
-            if (pause_msg_timer < win_ms()) {
-                pause_msg_timer += secs_to_ms(2);
-                println("Paused while minimized");
-            }
-        } break;
-        
-        default:
-        invalid_default_case;
-    }
     
     // input
     struct keyboard_input ki;
@@ -144,6 +124,7 @@ def_prg_update(prg_update)
         } else if (ki.key == KEY_ESCAPE) {
             win->flags |= WIN_CLO;
             gpu_check_leaks();
+            return 0;
         } else if (c > 0) {
             println("Got input %c", c);
         } else {
@@ -151,6 +132,10 @@ def_prg_update(prg_update)
         }
     }
     
+    /* update */
+    gpu_update();
+    
+    /* end frame */
     if (!got_input)
         os_sleep_ms(0); // relinquish time slice
     

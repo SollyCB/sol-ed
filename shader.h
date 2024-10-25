@@ -19,6 +19,8 @@
 
 #if GL_core_profile
 
+#extension GL_EXT_debug_printf : require
+
 struct vf_info_t {
     vec4 fg;
     vec4 bg;
@@ -38,6 +40,11 @@ layout(location = SH_BG_LOC) in vec4 bg;
 
 layout(location = 0) out vf_info_t vf_info;
 
+void pv4(vec4 v)
+{
+    debugPrintfEXT("(%f, %f, %f, %f)\n", v.x, v.y, v.z, v.w);
+}
+
 vec2 offset[] = {
     vec2(0, 0),
     vec2(0, 2),
@@ -54,6 +61,8 @@ void main() {
     gl_Position.xy = vec2(-1, -1) + pd.xy + offset[index[gl_VertexIndex]] * pd.zw;
     gl_Position.z = 0;
     gl_Position.w = 1;
+    
+    pv4(gl_Position);
     
     vf_info.fg = fg;
     vf_info.bg = bg;
