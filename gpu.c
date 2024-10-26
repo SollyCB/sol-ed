@@ -158,16 +158,6 @@ internal void gpu_db_await_and_reset_in_use_fences(void)
 
 internal int gpu_create_mem(void)
 {
-    if (gpu->db.sem[0] == VK_NULL_HANDLE) { // runs once per program
-        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
-            if (vk_create_sem(&gpu->db.sem[i])) {
-                log_error("Failed to create draw buffer semaphore %u", i);
-                while(--i < Max_u32)
-                    vk_destroy_sem(gpu->db.sem[i]);
-                return -1;
-            }
-        }
-    }
     if (gpu->sampler == VK_NULL_HANDLE) { // runs once per program
         VkSamplerCreateInfo ci = {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -593,6 +583,9 @@ internal int gpu_create_mem(void)
         
         vk_end_cmd(cmd[GPU_CI_T]);
         vk_end_cmd(cmd[GPU_CI_G]);
+        
+        gpu->db.glyph_upload_commands[GPU_CI_T] = cmd[GPU_CI_T];
+        gpu->db.glyph_upload_commands[GPU_CI_G] = cmd[GPU_CI_G];
     } else {
         VkImageMemoryBarrier2 b[CHT_SZ] = {
             {
@@ -636,14 +629,21 @@ internal int gpu_create_mem(void)
         vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
         
         vk_end_cmd(cmd[GPU_CI_G]);
+        
+        gpu->db.glyph_upload_commands[GPU_CI_G] = cmd[GPU_CI_G];
     }
     
+#if 0
+    // NOTE(SollyCB): I would like to do this, but I cannot think of a way to signal
+    // when this should happen that is clean enough to justify its minor benefit.
     if (gpu->flags & GPU_MEM_UNI) {
         vk_free_mem(gpu->mem[GPU_BI_T].handle);
         vk_destroy_buf(gpu->buf[GPU_BI_T].handle);
         gpu->mem[GPU_BI_T].handle = VK_NULL_HANDLE;
         gpu->buf[GPU_BI_T].handle = VK_NULL_HANDLE;
     }
+#endif
+    
     for(u32 i=0; i < CHT_SZ; ++i)
         stbtt_FreeBitmap(bm[i], NULL);
     
@@ -830,17 +830,10 @@ internal int gpu_create_dsl(void)
 
 internal int gpu_create_pll(void)
 {
-    VkPushConstantRange pcr = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .offset = 0,
-        .size = 16, // 1 * vec4
-    };
     VkPipelineLayoutCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
         .pSetLayouts = &gpu->dsl,
-        .pushConstantRangeCount = 1,
-        .pPushConstantRanges = &pcr,
     };
     
     if (vk_create_pll(&ci, &gpu->pll))
@@ -908,7 +901,7 @@ internal int gpu_create_rp(void)
 {
     local_persist VkAttachmentDescription a = {
         .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -1041,8 +1034,18 @@ internal int gpu_create_pl(void)
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
     };
     
-    local_persist VkViewport view = {.x = 0, .y = 0, .minDepth = 0, .maxDepth = 1};
-    local_persist VkRect2D scissor = {.offset = {.x = 0, .y = 0}};
+    local_persist VkViewport view = {
+        .x = 0,
+        .y = 0,
+        .width = 640,
+        .height = 480,
+        .minDepth = 0,
+        .maxDepth = 1,
+    };
+    local_persist VkRect2D scissor = {
+        .offset = {.x = 0, .y = 0},
+        .extent = {.width = 640, .height = 480},
+    };
     
     local_persist VkPipelineViewportStateCreateInfo vp = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -1066,7 +1069,11 @@ internal int gpu_create_pl(void)
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
     };
     
-    local_persist VkPipelineColorBlendAttachmentState cba = {};
+    local_persist VkPipelineColorBlendAttachmentState cba = {
+        .colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|
+            VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT,
+    };
     
     local_persist VkPipelineColorBlendStateCreateInfo cb = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -1169,6 +1176,16 @@ internal int gpu_db_add(struct rect_u16 rect, struct rgba fg, struct rgba bg)
 
 internal int gpu_db_flush(void)
 {
+    if (gpu->db.sem[0] == VK_NULL_HANDLE) { // runs once per program
+        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
+            if (vk_create_sem(&gpu->db.sem[i])) {
+                log_error("Failed to create draw buffer semaphore %u", i);
+                while(--i < Max_u32)
+                    vk_destroy_sem(gpu->db.sem[i]);
+                return -1;
+            }
+        }
+    }
     char msg[127];
     VkCommandBuffer cmd[GPU_CMD_CNT];
     if (gpu->flags & GPU_MEM_UNI) {
@@ -1284,12 +1301,13 @@ internal int gpu_db_flush(void)
             ra.extent.height = gpu->db.di[i].pd.ext.h;
     }
     
-    ra.offset.x = (s32)floorf((f32)ra.offset.x / 65535 * win->dim.w);
-    ra.offset.y = (s32)floorf((f32)ra.offset.y / 65535 * win->dim.h);
-    ra.extent.width = (s32)ceilf((f32)ra.extent.width / 65535 * win->dim.w);
-    ra.extent.height = (s32)ceilf((f32)ra.extent.height / 65535 * win->dim.h);
+    // Seems to tightly fit render area to cells
+    ra.offset.x = (s32)roundf((f32)ra.offset.x / 65535.0f * (f32)win->dim.w) -1;
+    ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h) -1;
+    ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w) +2;
+    ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h) +2;
     
-    VkClearValue cv = {.color = {.float32 = {0,0,0,1}}};
+    VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
     
     VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rbi.renderPass = gpu->rp;
@@ -1303,11 +1321,12 @@ internal int gpu_db_flush(void)
         .contents = VK_SUBPASS_CONTENTS_INLINE,
     };
     
+    // TODO(SollyCB): revert comments
     VkViewport vp;
-    vp.x = (f32)ra.offset.x;
-    vp.y = (f32)ra.offset.y;
-    vp.width = (f32)ra.extent.width;
-    vp.height = (f32)ra.extent.height;
+    vp.x = 0.0f;
+    vp.y = 0.0f;
+    vp.width = (f32)win->dim.w;
+    vp.height = (f32)win->dim.h;
     vp.minDepth = 0.0f;
     vp.maxDepth = 1.0f;
     
@@ -1322,47 +1341,14 @@ internal int gpu_db_flush(void)
     vk_cmd_end_rp(gcmd);
     vk_end_cmd(gcmd);
     
-    enum {WT,WS}; // wait vertex transfer, wait swapchain image acquire
-    VkSemaphore w_sem[] = {
-        [WS] = gpu->sc.sem[gpu->sc.i],
-        [WT] = gpu->db.sem[DB_SI_T]
-    };
-    VkPipelineStageFlags w_stg[] = {
-        [WS] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        [WT] = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-    };
+    // @TODO @CurrentTask
+    // Record the draw commands accounting for whether the glyphs need to be uploaded
+    // or not. Just do it in three separate large if blocks. Trying to reuse and modify
+    // similar initialization stuff is just cancer and is super confusing. It really
+    // is not even DRY to write it however many times, because each set of submit infos
+    // is actually pretty substantially different.
     
-    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    si.commandBufferCount = 1;
-    si.pCommandBuffers = &gcmd;
-    si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &gpu->db.sem[DB_SI_G];
-    
-    if ((gpu->flags & GPU_MEM_UNI) || (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i)) {
-        si.pWaitDstStageMask = &w_stg[WS];
-        si.waitSemaphoreCount = 1;
-        si.pWaitSemaphores = &w_sem[WS];
-    } else {
-        si.pWaitDstStageMask = w_stg;
-        si.waitSemaphoreCount = cl_array_size(w_sem);
-        si.pWaitSemaphores = w_sem;
-        
-        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        tsi.commandBufferCount = 1;
-        tsi.pCommandBuffers = &cmd[GPU_CI_T];
-        tsi.signalSemaphoreCount = 1;
-        tsi.pSignalSemaphores = &gpu->db.sem[DB_SI_T];
-        
-        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
-            log_error("Failed to submit transfer commands while flushing draw buffer");
-            return -1;
-        }
-    }
-    
-    if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &si, gpu->db.fence[frm_i])) {
-        log_error("Failed to submit graphics commands while flushing draw buffer");
-        return -1;
-    }
+    memset(gpu->db.glyph_upload_commands, 0, sizeof(gpu->db.glyph_upload_commands));
     gpu->db.in_use_fences |= 1 << frm_i;
     
     VkResult r;
@@ -1666,6 +1652,7 @@ def_gpu_create_sh(gpu_create_sh)
     src.data += ofs;
     src.size = sz - ofs;
     
+    trunc_file(SH_SRC_OUT_URI, 0);
     write_file(SH_SRC_OUT_URI, src.data, src.size);
     
     struct os_process vp = {.p = INVALID_HANDLE_VALUE};
@@ -1764,6 +1751,7 @@ def_gpu_update(gpu_update)
         vk_reset_cmdpool(gpu_cmd(i).pool, 0x0);
         gpu_dealloc_cmds(i);
     }
+    gpu->db.used = 0;
     
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if ((gpu->flags & GPU_MEM_OFS) == false) {
@@ -1778,7 +1766,7 @@ def_gpu_update(gpu_update)
     
     {
         struct rgba fg = {250, 0, 0, 255};
-        struct rgba bg = {0, 0, 250, 255};
+        struct rgba bg = {0, 0, 250, CH_A};
         struct rect_u16 r;
         r.ofs.x = gpu->cell.dim_px.w * 5;
         r.ofs.y = gpu->cell.dim_px.h * 5;

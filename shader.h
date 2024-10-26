@@ -17,7 +17,7 @@
 #define SH_FG_LOC 1
 #define SH_BG_LOC 2
 
-#if GL_core_profile
+#if GL_core_profile /* search token for gpu_compile_sh */
 
 #extension GL_EXT_debug_printf : require
 
@@ -57,8 +57,14 @@ uint index[] = {
     2, 3, 0,
 };
 
+vec2 positions[3] = {
+    vec2(0.0, -0.5),
+    vec2(0.5, 0.5),
+    vec2(-0.5, 0.5),
+};
+
 void main() {
-    gl_Position.xy = vec2(-1, -1) + pd.xy + offset[index[gl_VertexIndex]] * pd.zw;
+    gl_Position.xy = vec2(-1, -1) + pd.xy * 2 + offset[index[gl_VertexIndex]] * pd.zw;
     gl_Position.z = 0;
     gl_Position.w = 1;
     
@@ -66,7 +72,7 @@ void main() {
     
     vf_info.fg = fg;
     vf_info.bg = bg;
-    vf_info.tc = vec2(offset[index[gl_VertexIndex]] / 2);
+    vf_info.tc = (gl_Position.xy + vec2(1)) * 0.5;
 }
 #else
 /****************************************************/
@@ -79,14 +85,14 @@ layout(location = 0) in vf_info_t vf_info;
 layout(location = 0) out vec4 fc;
 
 void main() {
-    float g = texture(glyph[uint(vf_info.bg.w)], vf_info.tc).r;
-    vec3 col = mix(vf_info.bg.rgb, vf_info.fg.rgb, g * vf_info.fg.a);
-    fc = vec4(col, 1);
+    float g = texture(glyph[uint(vf_info.bg.a)], vf_info.tc).r;
+    vec3 col = mix(vf_info.bg.rgb, vf_info.fg.rgb, g);
+    fc = vec4(g, 0, 0, 1);
 }
 #endif // shader switch
 
 #endif // #if SHADER_SRC_GUARD
 
-#define SH_END
+#define SH_END /* search token for gpu_compile_sh */
 
 /* Leave whitespace following SH_END to ensure file is valid */

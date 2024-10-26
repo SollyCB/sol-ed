@@ -128,8 +128,11 @@ def_win_poll(win_poll)
         }
     }
     
-    if (win->flags & WIN_RSZ)
+    if (win->flags & WIN_RSZ) {
         SDL_GetWindowSize(win->handle, (int*)&win->dim.w, (int*)&win->dim.h);
+        win->rdim.w = 1.0f / win->dim.w;
+        win->rdim.h = 1.0f / win->dim.h;
+    }
     
     return 0;
 }

@@ -15,6 +15,7 @@ extern u32 frm_i;
 enum {
     DB_SI_T, // transfer complete
     DB_SI_G, // color output complete
+    DB_SI_I, // glyph upload
     DB_SEM_CNT,
 };
 
@@ -46,6 +47,13 @@ enum gpu_q_indices {
     GPU_QI_T,
     GPU_QI_P,
     GPU_Q_CNT,
+};
+
+// represents queues that can be submitted to
+enum gpu_cmdq_indices {
+    GPU_CI_G,
+    GPU_CI_T,
+    GPU_CMD_CNT
 };
 
 struct gpu {
@@ -124,12 +132,14 @@ struct gpu {
     struct draw_buffer { // size == gpu.cell.cnt
         VkSemaphore sem[DB_SEM_CNT];
         VkFence fence[FRAME_WRAP];
+        VkCommandBuffer glyph_upload_commands[GPU_CMD_CNT];
         large_set_t occupado;
         struct draw_info {
             struct rect_u16 pd;
             struct rgba fg,bg;
         } *di;
-        u32 used,in_use_fences; // bit mask for fences that can be waited on
+        u32 used; // number of occupied draw infos
+        u32 in_use_fences; // bit mask
     } db;
 };
 
@@ -157,13 +167,6 @@ def_gpu_check_leaks(gpu_check_leaks);
 enum gpu_cmd_opt {
     GPU_CMD_OT = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     GPU_CMD_RE = VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT,
-};
-
-// represents queues that can be submitted to
-enum gpu_cmdq_indices {
-    GPU_CI_G,
-    GPU_CI_T,
-    GPU_CMD_CNT
 };
 
 union gpu_memreq_info {
