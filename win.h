@@ -73,8 +73,12 @@ def_win_poll(win_poll);
 #define def_win_kb_next(name) bool name(struct keyboard_input *ki)
 def_win_kb_next(win_kb_next);
 
+#define def_win_screen_extent(name) int name(struct extent_u32 *e)
+def_win_screen_extent(win_screen_extent);
+
 #define def_win_key_to_char(name) char name(struct keyboard_input ki)
 def_win_key_to_char(win_key_to_char);
+
 #endif // LIB
 
 #endif // include guard

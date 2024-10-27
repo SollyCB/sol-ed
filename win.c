@@ -145,6 +145,18 @@ def_win_kb_next(win_kb_next)
     return true;
 }
 
+def_win_screen_extent(win_screen_extent)
+{
+    SDL_DisplayMode dm;
+    if (SDL_GetDesktopDisplayMode(0, &dm)) {
+        log_error("Failed to get screen extent");
+        return -1;
+    }
+    e->w = dm.w;
+    e->h = dm.h;
+    return 0;
+}
+
 def_win_key_to_char(win_key_to_char)
 {
     switch(ki.key) {

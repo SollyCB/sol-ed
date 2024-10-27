@@ -33,6 +33,7 @@ enum gpu_mem_indices {
     GPU_MI_G,
     GPU_MI_T,
     GPU_MI_I,
+    GPU_MI_R, // msaa render target
     GPU_MEM_CNT,
 };
 
@@ -132,6 +133,8 @@ struct gpu {
     struct draw_buffer { // size == gpu.cell.cnt
         VkSemaphore sem[DB_SEM_CNT];
         VkFence fence[FRAME_WRAP];
+        VkImage img[FRAME_WRAP]; // msaa render target
+        VkImageView view[FRAME_WRAP];
         large_set_t occupado;
         struct draw_info {
             struct rect_u16 pd;
@@ -193,6 +196,8 @@ extern char *gpu_cmdq_names[GPU_CMD_CNT];
 #define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)
 
 #define GPU_GLYPH_FENCE_HANDLE gpu->db.fence[0]
+
+#define MSAA_RT_FMT VK_FORMAT_R8G8B8A8_SRGB
 
 #endif // ifdef LIB
 

@@ -39,6 +39,7 @@ u32 gpu_ci_to_qi[GPU_CMD_CNT] = {
 internal int gpu_memreq_helper(union gpu_memreq_info info, u32 i, VkMemoryRequirements *mr)
 {
     switch(i) {
+        case GPU_MI_R:
         case GPU_MI_I: {
             VkImage img;
             if (vk_create_img(info.img, &img))
@@ -162,33 +163,6 @@ internal void gpu_db_await_and_reset_in_use_fences(void)
 
 internal int gpu_create_mem(void)
 {
-    if (gpu->db.sem[DB_SI_G] == VK_NULL_HANDLE) { // runs once per program
-        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
-            if (vk_create_sem(&gpu->db.sem[i])) {
-                log_error("Failed to create draw buffer semaphore %u", i);
-                while(--i < Max_u32)
-                    vk_destroy_sem(gpu->db.sem[i]);
-                return -1;
-            }
-        }
-    }
-    if (gpu->sampler == VK_NULL_HANDLE) { // runs once per program
-        VkSamplerCreateInfo ci = {
-            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-            .magFilter = VK_FILTER_NEAREST,
-            .minFilter = VK_FILTER_NEAREST,
-            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-            .minLod = 0,
-            .maxLod = VK_LOD_CLAMP_NONE,
-            .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-        };
-        if (vk_create_sampler(&ci, &gpu->sampler))
-            return -1;
-    }
-    
     local_persist VkImageCreateInfo ici = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -215,15 +189,45 @@ internal int gpu_create_mem(void)
     };
     
     if ((gpu->flags & GPU_MEM_INI) == false) { // runs once per program
+        if (gpu->db.sem[DB_SI_G] == VK_NULL_HANDLE) { // runs once per program
+            for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
+                if (vk_create_sem(&gpu->db.sem[i])) {
+                    log_error("Failed to create draw buffer semaphore %u", i);
+                    while(--i < Max_u32)
+                        vk_destroy_sem(gpu->db.sem[i]);
+                    memset(gpu->db.sem, 0, sizeof(gpu->db.sem));
+                    return -1;
+                }
+            }
+        }
+        if (gpu->sampler == VK_NULL_HANDLE) { // runs once per program
+            VkSamplerCreateInfo ci = {
+                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                .magFilter = VK_FILTER_NEAREST,
+                .minFilter = VK_FILTER_NEAREST,
+                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                .minLod = 0,
+                .maxLod = VK_LOD_CLAMP_NONE,
+                .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+            };
+            if (vk_create_sampler(&ci, &gpu->sampler))
+                return -1;
+        }
+        
         if (gpu->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
             gpu->flags |= GPU_MEM_UNI;
         
         vk_get_phys_dev_memprops(gpu->phys_dev, &gpu->memprops);
         
+        // MI_R type is equivalent to MI_I
         union gpu_memreq_info mr_infos[GPU_MEM_CNT] = {
             [GPU_MI_G] = {.buf = &bci[GPU_BI_G]},
             [GPU_MI_T] = {.buf = &bci[GPU_BI_T]},
             [GPU_MI_I] = {.img = &ici},
+            [GPU_MI_R] = {.img = &ici},
         };
         
         VkMemoryRequirements mr[GPU_MEM_CNT];
@@ -235,8 +239,10 @@ internal int gpu_create_mem(void)
             }
         }
         
+        // MI_R type is equivalent to MI_I
         u32 req_type_bits[GPU_MEM_CNT] = {
             [GPU_MI_I] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            [GPU_MI_R] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             [GPU_MI_G] = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             [GPU_MI_T] = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         };
@@ -244,43 +250,136 @@ internal int gpu_create_mem(void)
         if (gpu->flags & GPU_MEM_UNI)
             req_type_bits[GPU_MI_G] |= VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         
-        if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
-            VkCommandPoolCreateInfo ci[GPU_CMD_CNT] = {
-                [GPU_QI_G] = {
+        if (gpu->q[GPU_QI_G].cmd[GPU_CI_G].pool == VK_NULL_HANDLE) {
+            if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
+                VkCommandPoolCreateInfo ci[GPU_CMD_CNT] = {
+                    [GPU_QI_G] = {
+                        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                        .queueFamilyIndex = gpu->q[GPU_QI_G].i,
+                    },
+                    [GPU_QI_T] = {
+                        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+                        .queueFamilyIndex = gpu->q[GPU_QI_T].i,
+                    },
+                };
+                for(u32 j=0; j < FRAME_WRAP; ++j) {
+                    for(u32 i=0; i < GPU_CMD_CNT; ++i) {
+                        if (vk_create_cmdpool(&ci[i], &gpu->q[i].cmd[j].pool)) {
+                            do {
+                                while(--i < Max_u32) {
+                                    vk_destroy_cmdpool(gpu->q[i].cmd[j].pool);
+                                    gpu->q[i].cmd[j].pool = VK_NULL_HANDLE;
+                                }
+                            } while(--j < Max_u32);
+                            return -1;
+                        }
+                    }
+                }
+            } else {
+                VkCommandPoolCreateInfo ci = {
                     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                     .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
                     .queueFamilyIndex = gpu->q[GPU_QI_G].i,
-                },
-                [GPU_QI_T] = {
-                    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-                    .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                    .queueFamilyIndex = gpu->q[GPU_QI_T].i,
-                },
-            };
-            for(u32 j=0; j < FRAME_WRAP; ++j) {
-                for(u32 i=0; i < GPU_CMD_CNT; ++i) {
-                    if (vk_create_cmdpool(&ci[i], &gpu->q[i].cmd[j].pool)) {
-                        do {
-                            while(--i < Max_u32)
-                                vk_destroy_cmdpool(gpu->q[i].cmd[j].pool);
-                        } while(--j < Max_u32);
+                };
+                for(u32 j=0; j < FRAME_WRAP; ++j) {
+                    if (vk_create_cmdpool(&ci, &gpu->q[GPU_QI_G].cmd[j].pool)) {
+                        while(--j < Max_u32) {
+                            vk_destroy_cmdpool(gpu->q[GPU_QI_G].cmd[j].pool);
+                            gpu->q[GPU_QI_G].cmd[j].pool = VK_NULL_HANDLE;
+                        }
                         return -1;
                     }
                 }
             }
-        } else {
-            VkCommandPoolCreateInfo ci = {
-                .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-                .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                .queueFamilyIndex = gpu->q[GPU_QI_G].i,
-            };
-            if (vk_create_cmdpool(&ci, &gpu_cmd(GPU_CI_G).pool))
-                return -1;
         }
+        
+        u32 types[GPU_MEM_CNT];
+        for(u32 i=0; i < GPU_MEM_CNT; ++i)
+            types[i] = gpu_memtype_helper(mr[i].memoryTypeBits, req_type_bits[i]);
+        
+        if (gpu->db.img[0] == VK_NULL_HANDLE) {
+            struct extent_u32 e;
+            if (win_screen_extent(&e)) {
+                log_error("Failed to get screen extent in order to create msaa render target");
+                return -1;
+            }
+            
+            {
+                VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+                ci.imageType = VK_IMAGE_TYPE_2D;
+                ci.format = MSAA_RT_FMT;
+                ci.extent = (VkExtent3D) {.width = e.w, .height = e.h, .depth = 1};
+                ci.mipLevels = 1;
+                ci.arrayLayers = 1;
+                ci.samples = VK_SAMPLE_COUNT_4_BIT;
+                ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+                ci.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+                
+                for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
+                    if (vk_create_img(&ci, &gpu->db.img[i])) {
+                        log_error("Failed to create msaa image %u", i);
+                        while(--i < Max_u32) {
+                            vk_destroy_img(gpu->db.img[i]);
+                            gpu->db.img[i] = VK_NULL_HANDLE;
+                        }
+                        goto fail_msaa;
+                    }
+                }
+            }
+            
+            VkMemoryRequirements msaa_mr;
+            vk_get_img_memreq(gpu->db.img[0], &msaa_mr);
+            
+            VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+            ai.allocationSize = align(msaa_mr.size, msaa_mr.alignment) * cl_array_size(gpu->db.img);
+            ai.memoryTypeIndex = gpu->mem[GPU_MI_R].type;
+            
+            if (vk_alloc_mem(&ai, &gpu->mem[GPU_MI_R].handle)) {
+                log_error("Failed to allocate memory for msaa images");
+                goto fail_msaa_mem;
+            }
+            
+            for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
+                if (vk_bind_img_mem(gpu->db.img[i], gpu->mem[GPU_MI_R].handle, align(msaa_mr.size, msaa_mr.alignment) * i)) {
+                    log_error("Failed to bind memory to msaa image %u", i);
+                    goto fail_msaa_mem;
+                }
+            }
+            
+            {
+                VkImageViewCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+                ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                ci.format = MSAA_RT_FMT;
+                ci.subresourceRange = (VkImageSubresourceRange){.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1};
+                for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
+                    ci.image = gpu->db.img[i];
+                    if (vk_create_imgv(&ci, &gpu->db.view[i])) {
+                        log_error("Failed to create msaa render target view for image %u", i);
+                        while(--i < Max_u32) {
+                            vk_destroy_imgv(gpu->db.view[i]);
+                            gpu->db.view[i] = VK_NULL_HANDLE;
+                        }
+                        goto fail_msaa_mem;
+                    }
+                }
+            }
+            goto success_msaa;
+            
+            fail_msaa_mem:
+            for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
+                vk_destroy_img(gpu->db.img[i]);
+                gpu->db.img[i] = VK_NULL_HANDLE;
+            }
+            fail_msaa:
+            return -1;
+        }
+        success_msaa:
         
         // Only update state when nothing can fail
         for(u32 i=0; i < GPU_MEM_CNT; ++i)
-            gpu->mem[i].type = gpu_memtype_helper(mr[i].memoryTypeBits, req_type_bits[i]);
+            gpu->mem[i].type = types[i];
         if (gpu->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
             gpu->flags |= GPU_MEM_UNI;
         gpu->flags |= GPU_MEM_INI;
@@ -990,6 +1089,8 @@ internal int gpu_create_rp(void)
     return 0;
 }
 
+// @TODO CurrentTask Create and destroy a framebuffer at the beginning and end of each
+// frame in order to only use 2 msaa images, rather than one for every swapchain image.
 internal int gpu_create_fb(void)
 {
     local_persist VkFramebufferCreateInfo ci = {
@@ -1844,7 +1945,7 @@ def_gpu_update(gpu_update)
     
     {
         struct rgba fg = {0, 0, 0, 255};
-        struct rgba bg = {250, 250, 250, CH_A};
+        struct rgba bg = {250, 250, 250, CH_B};
         struct rect_u16 r;
         r.ofs.x = 0; // gpu->cell.dim_px.w;
         r.ofs.y = 0; // gpu->cell.dim_px.h;
