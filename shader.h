@@ -27,6 +27,11 @@ struct vf_info_t {
     vec2 tc;
 };
 
+void pv4(vec4 v)
+{
+    debugPrintfEXT("(%f, %f, %f, %f)\n", v.x, v.y, v.z, v.w);
+}
+
 #ifdef VERT
 /****************************************************/
 // Vertex shader
@@ -36,14 +41,9 @@ struct vf_info_t {
 // because I want to pass in normalized r8/r16, not float...
 layout(location = SH_PD_LOC) in vec4 pd;
 layout(location = SH_FG_LOC) in vec4 fg;
-layout(location = SH_BG_LOC) in vec4 bg;
+layout(location = SH_BG_LOC) in uvec4 bg;
 
 layout(location = 0) out vf_info_t vf_info;
-
-void pv4(vec4 v)
-{
-    debugPrintfEXT("(%f, %f, %f, %f)\n", v.x, v.y, v.z, v.w);
-}
 
 vec2 offset[] = {
     vec2(0, 0),
@@ -62,8 +62,6 @@ void main() {
     gl_Position.z = 0;
     gl_Position.w = 1;
     
-    pv4(gl_Position);
-    
     vf_info.fg = fg;
     vf_info.bg = bg;
     vf_info.tc = offset[index[gl_VertexIndex]] * 0.5;
@@ -79,9 +77,12 @@ layout(location = 0) in vf_info_t vf_info;
 layout(location = 0) out vec4 fc;
 
 void main() {
-    float g = texture(glyph[0], vf_info.tc).r;
-    vec3 col = mix(vf_info.bg.rgb, vf_info.fg.rgb, g);
-    fc = vec4(g, 0, 0, 1);
+    uint c = uint(vf_info.bg.a);
+    vec3 bg = vf_info.bg.xyz / 255;
+    
+    float g = texture(glyph[c], vf_info.tc).r;
+    vec3 col = mix(bg, vf_info.fg.rgb, g);
+    fc = vec4(col, 1);
 }
 #endif // shader switch
 

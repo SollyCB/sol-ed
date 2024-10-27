@@ -8,7 +8,7 @@
 #include "vdt.h"
 
 #define FONT_URI "consolab.ttf"
-#define FONT_HEIGHT 20
+#define FONT_HEIGHT 100
 
 #define TOTAL_MEM mb(32)
 #define MAX_THREADS 1

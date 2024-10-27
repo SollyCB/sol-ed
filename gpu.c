@@ -178,9 +178,9 @@ internal int gpu_create_mem(void)
             .magFilter = VK_FILTER_NEAREST,
             .minFilter = VK_FILTER_NEAREST,
             .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
             .minLod = 0,
             .maxLod = VK_LOD_CLAMP_NONE,
             .borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
@@ -1314,7 +1314,7 @@ internal int gpu_db_flush(void)
         vk_end_cmd(cmd[GPU_CI_T]);
     }
     
-    VkRect2D ra;
+    VkRect2D ra = {};
     memset(&ra.offset, 0x7f, sizeof(ra.offset));
     memset(&ra.extent, 0x00, sizeof(ra.extent));
     for(u32 i=0; i < gpu->db.used; ++i) {
@@ -1329,10 +1329,10 @@ internal int gpu_db_flush(void)
     }
     
     // Seems to tightly fit render area to cells
-    ra.offset.x = (s32)roundf((f32)ra.offset.x / 65535.0f * (f32)win->dim.w) -1;
-    ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h) -1;
-    ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w) +2;
-    ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h) +2;
+    ra.offset.x = (s32)roundf((f32)ra.offset.x / 65535.0f * (f32)win->dim.w);
+    ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h);
+    ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w);
+    ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h);
     
     VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
     
@@ -1843,13 +1843,13 @@ def_gpu_update(gpu_update)
     gpu->flags ^= GPU_MEM_OFS;
     
     {
-        struct rgba fg = {250, 0, 0, 255};
-        struct rgba bg = {0, 0, 250, CH_A};
+        struct rgba fg = {0, 0, 0, 255};
+        struct rgba bg = {250, 250, 250, CH_A};
         struct rect_u16 r;
-        r.ofs.x = gpu->cell.dim_px.w * 5;
-        r.ofs.y = gpu->cell.dim_px.h * 5;
-        r.ext.w = gpu->cell.dim_px.w * 5;
-        r.ext.h = gpu->cell.dim_px.h * 5;
+        r.ofs.x = 0; // gpu->cell.dim_px.w;
+        r.ofs.y = 0; // gpu->cell.dim_px.h;
+        r.ext.w = gpu->cell.dim_px.w;
+        r.ext.h = gpu->cell.dim_px.h;
         
         gpu_db_add(r, fg, bg);
         gpu_db_flush();
