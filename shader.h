@@ -57,12 +57,6 @@ uint index[] = {
     2, 3, 0,
 };
 
-vec2 positions[3] = {
-    vec2(0.0, -0.5),
-    vec2(0.5, 0.5),
-    vec2(-0.5, 0.5),
-};
-
 void main() {
     gl_Position.xy = vec2(-1, -1) + pd.xy * 2 + offset[index[gl_VertexIndex]] * pd.zw;
     gl_Position.z = 0;
@@ -72,7 +66,7 @@ void main() {
     
     vf_info.fg = fg;
     vf_info.bg = bg;
-    vf_info.tc = (gl_Position.xy + vec2(1)) * 0.5;
+    vf_info.tc = offset[index[gl_VertexIndex]] * 0.5;
 }
 #else
 /****************************************************/
@@ -85,7 +79,7 @@ layout(location = 0) in vf_info_t vf_info;
 layout(location = 0) out vec4 fc;
 
 void main() {
-    float g = texture(glyph[uint(vf_info.bg.a)], vf_info.tc).r;
+    float g = texture(glyph[0], vf_info.tc).r;
     vec3 col = mix(vf_info.bg.rgb, vf_info.fg.rgb, g);
     fc = vec4(g, 0, 0, 1);
 }

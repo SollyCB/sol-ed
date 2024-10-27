@@ -401,8 +401,8 @@ internal int gpu_create_mem(void)
         }
     }
     
-    max_w += 1; // 1px padding between char cells
-    max_h += 1;
+    //max_w += 1; // 1px padding between char cells
+    //max_h += 1;
     
     struct extent_u16 win_dim_cells;
     win_dim_cells.w = (u16)ceilf((f32)win->dim.w / max_w);
@@ -496,7 +496,7 @@ internal int gpu_create_mem(void)
                 .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
                 .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
                 .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
                 .image = g[0].img,
@@ -573,7 +573,7 @@ internal int gpu_create_mem(void)
                 .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
                 .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
                 .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                 .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
                 .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
                 .image = g[0].img,
