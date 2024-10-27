@@ -344,7 +344,7 @@ static inline void vk_destroy_fence(VkFence fence) {
 
 static inline void vk_await_fences(u32 cnt, VkFence *fences, bool await_all) {
     // Deliberately ignoring the result
-    cvk(vdt_call(WaitForFences)(gpu->dev, cnt, fences, await_all, secs_to_ns(3)));
+    cvk(vdt_call(WaitForFences)(gpu->dev, cnt, fences, await_all, (u64)10e9));
 }
 
 static inline VkResult vk_fence_status(VkFence f) {

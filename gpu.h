@@ -10,7 +10,7 @@
 #define SC_MIN_IMGS 2
 #define FRAME_WRAP 2
 
-extern u32 frm_i;
+extern u32 frm_i; // frame index, is either 0 or 1
 
 enum {
     DB_SI_T, // transfer complete
@@ -92,7 +92,7 @@ struct gpu {
     struct gpu_glyph {
         VkImage img;
         VkImageView view;
-        int x,y;
+        int x,y,w,h;
     } glyph[CHT_SZ];
     
     struct {
@@ -132,7 +132,6 @@ struct gpu {
     struct draw_buffer { // size == gpu.cell.cnt
         VkSemaphore sem[DB_SEM_CNT];
         VkFence fence[FRAME_WRAP];
-        VkCommandBuffer glyph_upload_commands[GPU_CMD_CNT];
         large_set_t occupado;
         struct draw_info {
             struct rect_u16 pd;
@@ -192,6 +191,8 @@ extern char *gpu_cmdq_names[GPU_CMD_CNT];
 
 // calculate the size in bytes of the draw buffer
 #define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)
+
+#define GPU_GLYPH_FENCE_HANDLE gpu->db.fence[0]
 
 #endif // ifdef LIB
 

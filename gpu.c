@@ -9,6 +9,10 @@
 struct gpu *gpu;
 
 u32 frm_i = 0;
+static inline void gpu_inc_frame(void)
+{
+    frm_i = (frm_i + 1) % FRAME_WRAP;
+}
 
 u32 gpu_bi_to_mi[GPU_BUF_CNT] = {
     [GPU_BI_G] = GPU_MI_G,
@@ -158,6 +162,16 @@ internal void gpu_db_await_and_reset_in_use_fences(void)
 
 internal int gpu_create_mem(void)
 {
+    if (gpu->db.sem[DB_SI_G] == VK_NULL_HANDLE) { // runs once per program
+        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
+            if (vk_create_sem(&gpu->db.sem[i])) {
+                log_error("Failed to create draw buffer semaphore %u", i);
+                while(--i < Max_u32)
+                    vk_destroy_sem(gpu->db.sem[i]);
+                return -1;
+            }
+        }
+    }
     if (gpu->sampler == VK_NULL_HANDLE) { // runs once per program
         VkSamplerCreateInfo ci = {
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -463,6 +477,147 @@ internal int gpu_create_mem(void)
         goto fail_free_buf_mem;
     }
     
+    if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
+        enum {UT,TG,STAGE_CNT};
+        VkImageMemoryBarrier2 b[STAGE_CNT][CHT_SZ] = {
+            [UT][0] = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = g[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            },
+            [TG][0] = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
+                .image = g[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            },
+        };
+        for(u32 i=0; i < STAGE_CNT; ++i) {
+            for(u32 j=1; j < CHT_SZ; ++j) {
+                b[i][j] = b[i][0];
+                b[i][j].image = g[j].img;
+            }
+        }
+        
+        VkDependencyInfo d[STAGE_CNT] = {
+            [UT] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = CHT_SZ,
+                .pImageMemoryBarriers = b[UT],
+            },
+            [TG] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = CHT_SZ,
+                .pImageMemoryBarriers = b[TG],
+            },
+        };
+        
+        vk_begin_cmd(cmd[GPU_CI_T], GPU_CMD_OT);
+        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[UT]);
+        
+        u32 ofs = 0;
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            memcpy((u8*)buf_map[GPU_BI_T] + ofs, bm[i], bm_sz[i]);
+            vk_cmd_copy_buf_to_img(cmd[GPU_CI_T], buf[GPU_BI_T],
+                                   g[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
+        }
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[TG]);
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d[TG]);
+        
+        vk_end_cmd(cmd[GPU_CI_T]);
+        vk_end_cmd(cmd[GPU_CI_G]);
+        
+        VkPipelineStageFlags w_stg = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        
+        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        tsi.commandBufferCount = 1;
+        tsi.pCommandBuffers = &cmd[GPU_CI_T];
+        tsi.signalSemaphoreCount = 1;
+        tsi.pSignalSemaphores = &gpu->db.sem[DB_SI_I];
+        
+        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        gsi.waitSemaphoreCount = 1;
+        gsi.pWaitSemaphores = &gpu->db.sem[DB_SI_I];
+        gsi.pWaitDstStageMask = &w_stg;
+        gsi.commandBufferCount = 1;
+        gsi.pCommandBuffers = &cmd[GPU_CI_G];
+        
+        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
+            log_error("Failed to submit glyph upload commands to transfer queue");
+            goto fail_free_buf_mem;
+        }
+        vk_reset_fences(1, &GPU_GLYPH_FENCE_HANDLE);
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[0])) {
+            log_error("Failed to submit glyphs acquire commands to graphics queue");
+            goto fail_free_buf_mem;
+        }
+    } else {
+        VkImageMemoryBarrier2 b[CHT_SZ] = {
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
+                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
+                .image = g[0].img,
+                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+            }
+        };
+        for(u32 i=1; i < CHT_SZ; ++i) {
+            b[i] = b[0];
+            b[i].image = g[i].img;
+        }
+        
+        VkDependencyInfo d = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = CHT_SZ,
+            .pImageMemoryBarriers = b,
+        };
+        
+        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
+        
+        u32 ofs = 0;
+        for(u32 i=0; i < CHT_SZ; ++i) {
+            memcpy((u8*)buf_map[GPU_BI_G] + ofs, bm[i], bm_sz[i]);
+            vk_cmd_copy_buf_to_img(cmd[GPU_BI_G], buf[GPU_BI_G],
+                                   g[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
+            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
+        }
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
+        
+        vk_end_cmd(cmd[GPU_CI_G]);
+        
+        VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cmd[GPU_CI_G];
+        
+        vk_reset_fences(1, &GPU_GLYPH_FENCE_HANDLE);
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &si, gpu->db.fence[0])) {
+            log_error("Failed to submit glyph upload commands to transfer queue");
+            goto fail_free_buf_mem;
+        }
+    }
+    
     // @TODO CurrentTask: At this stage in the program, all memory objects have been
     // successfully created, so now we need to:
     //     - destroy the old objects
@@ -474,7 +629,6 @@ internal int gpu_create_mem(void)
         pfree(MT, gpu->db.di);
     gpu->db.di = db;
     gpu->db.used = 0;
-    
     create_large_set(cell_cnt, (u64*)((u8*)db + gpu_dba_sz(cell_cnt)), NULL, &gpu->db.occupado);
     
     for(u32 i=0; i < GPU_MEM_CNT; ++i) {
@@ -515,123 +669,6 @@ internal int gpu_create_mem(void)
     gpu->buf[GPU_BI_T].data = buf_map[GPU_BI_T];
     if (gpu->flags & GPU_MEM_UNI)
         gpu->buf[GPU_BI_G].data = buf_map[GPU_BI_G];
-    
-    if (gpu->q[GPU_QI_G].i != gpu->q[GPU_QI_T].i) {
-        enum {UT,TG,STAGE_CNT};
-        VkImageMemoryBarrier2 b[STAGE_CNT][CHT_SZ] = {
-            [UT][0] = {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = gpu->glyph[0].img,
-                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-            },
-            [TG][0] = {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
-                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
-                .image = gpu->glyph[0].img,
-                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-            },
-        };
-        for(u32 i=0; i < STAGE_CNT; ++i) {
-            for(u32 j=1; j < CHT_SZ; ++j) {
-                b[i][j] = b[i][0];
-                b[i][j].image = gpu->glyph[j].img;
-            }
-        }
-        
-        VkDependencyInfo d[STAGE_CNT] = {
-            [UT] = {
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .imageMemoryBarrierCount = CHT_SZ,
-                .pImageMemoryBarriers = b[UT],
-            },
-            [TG] = {
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .imageMemoryBarrierCount = CHT_SZ,
-                .pImageMemoryBarriers = b[TG],
-            },
-        };
-        
-        vk_begin_cmd(cmd[GPU_CI_T], GPU_CMD_OT);
-        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[UT]);
-        
-        u32 ofs = 0;
-        for(u32 i=0; i < CHT_SZ; ++i) {
-            memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, bm[i], bm_sz[i]);
-            vk_cmd_copy_buf_to_img(cmd[GPU_CI_T], gpu->buf[GPU_BI_T].handle,
-                                   gpu->glyph[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
-            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
-        }
-        // no need to go through the gpu_alloc functions here because we know that this
-        // allocation is going to fit and nothing else is allocating at this time.
-        gpu->buf[GPU_BI_T].used = ofs; 
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_T], &d[TG]);
-        vk_cmd_pl_barr(cmd[GPU_CI_G], &d[TG]);
-        
-        vk_end_cmd(cmd[GPU_CI_T]);
-        vk_end_cmd(cmd[GPU_CI_G]);
-        
-        gpu->db.glyph_upload_commands[GPU_CI_T] = cmd[GPU_CI_T];
-        gpu->db.glyph_upload_commands[GPU_CI_G] = cmd[GPU_CI_G];
-    } else {
-        VkImageMemoryBarrier2 b[CHT_SZ] = {
-            {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT_KHR,
-                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT_KHR,
-                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = gpu->q[GPU_QI_T].i,
-                .dstQueueFamilyIndex = gpu->q[GPU_QI_G].i,
-                .image = gpu->glyph[0].img,
-                .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-            }
-        };
-        for(u32 i=1; i < CHT_SZ; ++i) {
-            b[i] = b[0];
-            b[i].image = gpu->glyph[i].img;
-        }
-        
-        VkDependencyInfo d = {
-            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-            .imageMemoryBarrierCount = CHT_SZ,
-            .pImageMemoryBarriers = b,
-        };
-        
-        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
-        
-        u32 ofs = 0;
-        for(u32 i=0; i < CHT_SZ; ++i) {
-            memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, bm[i], bm_sz[i]);
-            vk_cmd_copy_buf_to_img(cmd[GPU_BI_G], gpu->buf[GPU_BI_G].handle,
-                                   gpu->glyph[i].img, ofs, bm_dim[i].w, bm_dim[i].h);
-            ofs += (u32)align(bm_sz[i], gpu->props.limits.optimalBufferCopyOffsetAlignment);
-        }
-        // no need to go through the gpu_alloc functions here because we know that this
-        // allocation is going to fit and nothing else is allocating at this time.
-        gpu->buf[GPU_BI_G].used = ofs;
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_G], &d);
-        
-        vk_end_cmd(cmd[GPU_CI_G]);
-        
-        gpu->db.glyph_upload_commands[GPU_CI_G] = cmd[GPU_CI_G];
-    }
     
 #if 0
     // NOTE(SollyCB): I would like to do this, but I cannot think of a way to signal
@@ -1176,16 +1213,6 @@ internal int gpu_db_add(struct rect_u16 rect, struct rgba fg, struct rgba bg)
 
 internal int gpu_db_flush(void)
 {
-    if (gpu->db.sem[0] == VK_NULL_HANDLE) { // runs once per program
-        for(u32 i=0; i < cl_array_size(gpu->db.sem); ++i) {
-            if (vk_create_sem(&gpu->db.sem[i])) {
-                log_error("Failed to create draw buffer semaphore %u", i);
-                while(--i < Max_u32)
-                    vk_destroy_sem(gpu->db.sem[i]);
-                return -1;
-            }
-        }
-    }
     char msg[127];
     VkCommandBuffer cmd[GPU_CMD_CNT];
     if (gpu->flags & GPU_MEM_UNI) {
@@ -1321,7 +1348,6 @@ internal int gpu_db_flush(void)
         .contents = VK_SUBPASS_CONTENTS_INLINE,
     };
     
-    // TODO(SollyCB): revert comments
     VkViewport vp;
     vp.x = 0.0f;
     vp.y = 0.0f;
@@ -1341,14 +1367,62 @@ internal int gpu_db_flush(void)
     vk_cmd_end_rp(gcmd);
     vk_end_cmd(gcmd);
     
-    // @TODO @CurrentTask
-    // Record the draw commands accounting for whether the glyphs need to be uploaded
-    // or not. Just do it in three separate large if blocks. Trying to reuse and modify
-    // similar initialization stuff is just cancer and is super confusing. It really
-    // is not even DRY to write it however many times, because each set of submit infos
-    // is actually pretty substantially different.
-    
-    memset(gpu->db.glyph_upload_commands, 0, sizeof(gpu->db.glyph_upload_commands));
+    if ((gpu->flags & GPU_MEM_UNI) == false && gpu->q[GPU_QI_T].i != gpu->q[GPU_QI_G].i) {
+        enum {WTR,WSC};
+        VkSemaphore w_sem[] = {
+            [WTR] = gpu->db.sem[DB_SI_T],
+            [WSC] = gpu->sc.sem[gpu->sc.i],
+        };
+        VkPipelineStageFlags w_stg[] = {
+            [WTR] = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        };
+        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        gsi.waitSemaphoreCount = cl_array_size(w_sem);
+        gsi.pWaitSemaphores = w_sem;
+        gsi.pWaitDstStageMask = w_stg;
+        gsi.commandBufferCount = 1;
+        gsi.pCommandBuffers = &cmd[GPU_CI_G];
+        gsi.signalSemaphoreCount = 1;
+        gsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_G];
+        
+        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        tsi.commandBufferCount = 1;
+        tsi.pCommandBuffers = &cmd[GPU_CI_T];
+        tsi.signalSemaphoreCount = 1;
+        tsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_T];
+        
+        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
+            log_error("Failed to submit transfer commands");
+            return -1;
+        }
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
+            log_error("Failed to submit graphics commands");
+            return -1;
+        }
+    } else {
+        enum {WSC};
+        VkSemaphore w_sem[] = {
+            [WSC] = gpu->sc.sem[gpu->sc.i],
+        };
+        VkPipelineStageFlags w_stg[] = {
+            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        };
+        
+        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        gsi.waitSemaphoreCount = cl_array_size(w_sem);
+        gsi.pWaitSemaphores = w_sem;
+        gsi.pWaitDstStageMask = w_stg;
+        gsi.commandBufferCount = 1;
+        gsi.pCommandBuffers = &cmd[GPU_CI_G];
+        gsi.signalSemaphoreCount = 1;
+        gsi.pSignalSemaphores = &gpu->db.sem[DB_SI_G];
+        
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
+            log_error("Failed to submit graphics commands");
+            return -1;
+        }
+    }
     gpu->db.in_use_fences |= 1 << frm_i;
     
     VkResult r;
@@ -1634,6 +1708,9 @@ def_create_gpu(create_gpu)
     gpu_create_fb();
     gpu_create_pl();
     
+    // Glyph upload should be done by now
+    vk_await_fences(1, &GPU_GLYPH_FENCE_HANDLE, true);
+    
     return 0;
 }
 
@@ -1735,9 +1812,10 @@ def_gpu_update(gpu_update)
             log_error("Failed to handle window resize");
             return -1;
         }
+        vk_await_fences(1, &GPU_GLYPH_FENCE_HANDLE, true);
     }
     
-    frm_i = (frm_i + 1) % FRAME_WRAP;
+    gpu_inc_frame();
     gpu_db_await_fence(frm_i);
     
     if (gpu_sc_next_img()) {
