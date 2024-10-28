@@ -1687,20 +1687,6 @@ def_gpu_update(gpu_update)
     }
     gpu->flags ^= GPU_MEM_OFS;
     
-#if 0
-    {
-        struct rgba fg = {0, 0, 0, 255};
-        struct rgba bg = {250, 250, 250, CH_a};
-        struct rect_u16 r;
-        r.ofs.x = 0; // gpu->cell.dim_px.w;
-        r.ofs.y = 0; // gpu->cell.dim_px.h;
-        r.ext.w = gpu->cell.dim_px.w;
-        r.ext.h = gpu->cell.dim_px.h;
-        
-        gpu_db_add(r, fg, bg);
-    }
-#endif
-    
     gpu_db_flush();
     
     return 0;
@@ -2026,6 +2012,11 @@ def_gpu_check_leaks(gpu_check_leaks)
     for(u32 i=0; i < cl_array_size(gpu->sc.sem); ++i)
         vk_destroy_sem(gpu->sc.sem[i]);
     vk_destroy_sc_khr(gpu->sc.info.oldSwapchain);
+    
+    for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
+        vk_destroy_img(gpu->db.img[i]);
+        vk_destroy_imgv(gpu->db.view[i]);
+    }
     
     vkDestroyDevice(gpu->dev, NULL);
 }

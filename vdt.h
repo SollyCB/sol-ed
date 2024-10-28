@@ -134,7 +134,7 @@ def_create_vdt(create_vdt);
 def_cvk(cvk_fn);
 #define cvk(res) cvk_fn(res, __FILE__, __LINE__, __FUNCTION__)
 #else
-#define cvk(res)
+#define cvk(res) res
 #endif
 
 #define vdt_call(name) ((PFN_vk ## name)(vdt->table[VDT_ ## name].fn))
@@ -454,6 +454,7 @@ static inline VkResult vk_qsub(VkQueue q, u32 cnt, VkSubmitInfo *si, VkFence fen
     return cvk(vdt_call(QueueSubmit)(q, cnt, si, fence));
 }
 
+#ifdef DEBUG
 def_cvk(cvk_fn)
 {
     char *err = "Unknown VkResult (may be an extension)";
@@ -487,6 +488,6 @@ def_cvk(cvk_fn)
     log_error("[%s, %u, %s] %s (%i)", file, line, fn, err, (s64)res);
     return res;
 }
+#endif // DEBUG
 #endif // LIB
-
 #endif // VDT_H

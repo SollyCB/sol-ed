@@ -139,10 +139,9 @@ def_prg_update(prg_update)
         }
     }
     
-#if 1
     {
         struct rgba fg = {0, 0, 0, 255};
-        struct rgba bg = {250, 250, 250, CH_a};
+        struct rgba bg = {250, 250, 250, CH_B};
         struct rect_u16 r;
         r.ofs.x = 0; // gpu->cell.dim_px.w;
         r.ofs.y = 0; // gpu->cell.dim_px.h;
@@ -151,7 +150,6 @@ def_prg_update(prg_update)
         
         gpu_db_add(r, fg, bg);
     }
-#endif
     
     /* update */
     gpu_update();
