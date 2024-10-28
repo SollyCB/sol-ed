@@ -155,8 +155,17 @@ def_create_gpu(create_gpu);
 #define def_gpu_create_sh(name) int name(void)
 def_gpu_create_sh(gpu_create_sh);
 
+#define def_gpu_handle_win_resize(name) int name(void)
+def_gpu_handle_win_resize(gpu_handle_win_resize);
+
 #define def_gpu_update(name) int name(void)
 def_gpu_update(gpu_update);
+
+#define def_gpu_db_add(name) int name(struct rect_u16 rect, struct rgba fg, struct rgba bg)
+def_gpu_db_add(gpu_db_add);
+
+#define def_gpu_db_flush(name) int name(void)
+def_gpu_db_flush(gpu_db_flush);
 
 #define def_gpu_check_leaks(name) void name(void)
 def_gpu_check_leaks(gpu_check_leaks);

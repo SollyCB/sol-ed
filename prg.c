@@ -112,6 +112,13 @@ def_prg_update(prg_update)
     /* window */
     win_poll();
     
+    if (win->flags & WIN_RSZ) {
+        if (gpu_handle_win_resize()) {
+            log_error("Failed to handle window resize");
+            return -1;
+        }
+    }
+    
     bool got_input = false;
     
     // input
@@ -131,6 +138,20 @@ def_prg_update(prg_update)
             println("Input is not a text char");
         }
     }
+    
+#if 1
+    {
+        struct rgba fg = {0, 0, 0, 255};
+        struct rgba bg = {250, 250, 250, CH_a};
+        struct rect_u16 r;
+        r.ofs.x = 0; // gpu->cell.dim_px.w;
+        r.ofs.y = 0; // gpu->cell.dim_px.h;
+        r.ext.w = gpu->cell.dim_px.w;
+        r.ext.h = gpu->cell.dim_px.h;
+        
+        gpu_db_add(r, fg, bg);
+    }
+#endif
     
     /* update */
     gpu_update();

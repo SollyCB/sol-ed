@@ -157,8 +157,10 @@ internal void gpu_db_await_and_reset_in_use_fences(void)
     u32 cnt,i;
     for_bits(i, cnt, gpu->db.in_use_fences)
         f[cnt] = gpu->db.fence[i];
-    vk_await_fences(cnt, f, true);
-    vk_reset_fences(cnt, f);
+    if (cnt) {
+        vk_await_fences(cnt, f, true);
+        vk_reset_fences(cnt, f);
+    }
 }
 
 internal int gpu_create_mem(void)
@@ -1290,293 +1292,6 @@ internal struct rect_u16 gpu_px_to_cell_rect(struct rect_u16 rect)
     return r;
 }
 
-internal int gpu_db_add(struct rect_u16 rect, struct rgba fg, struct rgba bg)
-{
-    if (gpu->db.used == gpu->cell.cnt)
-        return -1;
-    
-    struct rect_u16 win_rect = {.ext = win->dim};
-    rect_clamp(rect, win_rect);
-    
-    gpu->db.di[gpu->db.used].pd = gpu_normalize_px_rect(rect);
-    gpu->db.di[gpu->db.used].bg = bg;
-    gpu->db.di[gpu->db.used].fg = fg;
-    gpu->db.used += 1;
-    
-    // makes the following calculations generally more concise
-    rect.ext.w += rect.ofs.x;
-    rect.ext.h += rect.ofs.y;
-    struct rect_u16 cr = gpu_px_to_cell_rect(rect);
-    
-    for(u32 x = (u32)cr.ofs.x + (u32)cr.ofs.y * gpu->cell.win_dim_cells.w;
-        x < (u32)cr.ext.w + (u32)(cr.ext.h-1) * gpu->cell.win_dim_cells.w;
-        x += gpu->cell.win_dim_cells.w)
-    {
-        for(u32 i = x; i < x + (cr.ext.w - cr.ofs.x); ++i)
-            large_set_add(gpu->db.occupado, i);
-    }
-    
-    return 0;
-}
-
-internal int gpu_db_flush(void)
-{
-    char msg[127];
-    VkCommandBuffer cmd[GPU_CMD_CNT];
-    if (gpu->flags & GPU_MEM_UNI) {
-        u32 cmdi = gpu_alloc_cmds(GPU_QI_G, 1);
-        if (cmdi == Max_u32) {
-            log_error("Failed to allocate graphics command buffer for flushing draw buffer");
-            return -1;
-        }
-        cmd[GPU_CI_G] = gpu_cmd(GPU_CI_G).bufs[cmdi];
-        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
-    } else {
-        for(u32 i=0; i < GPU_CMD_CNT; ++i) {
-            u32 cmdi = gpu_alloc_cmds(i, 1);
-            if (cmdi == Max_u32) {
-                log_error("Failed to allocate command buffer %u (%s) for flushing draw buffer", gpu_cmd_name(i));
-                return -1;
-            }
-            cmd[i] = gpu_cmd(GPU_CI_G).bufs[cmdi];
-        }
-        for(u32 i=0; i < GPU_CMD_CNT; ++i)
-            vk_begin_cmd(cmd[i], GPU_CMD_OT);
-    }
-    
-    u64 ofs;
-    u64 sz = sizeof(*gpu->db.di) * gpu->db.used;
-    if (gpu->flags & GPU_MEM_UNI) {
-        ofs = gpu_buf_alloc(GPU_BI_G, sz);
-        if (ofs == Max_u64) {
-            dbg_strcpy(CLSTR(msg), STR("unified memory architecture"));
-            goto bufcpy_fail;
-        }
-        memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, gpu->db.di, sz);
-    } else if (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i) {
-        dbg_strcpy(CLSTR(msg), STR("non-discrete transfer"));
-        
-        ofs = gpu_buf_alloc(GPU_BI_T, sz);
-        if (ofs == Max_u64) {
-            goto bufcpy_fail;
-        }
-        
-        ofs = gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
-        if (ofs == Max_u64)
-            goto bufcpy_fail;
-        
-        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
-        
-        VkMemoryBarrier2 barr = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-        barr.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        barr.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        barr.dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT;
-        barr.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
-        
-        VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-        dep.memoryBarrierCount = 1;
-        dep.pMemoryBarriers = &barr;
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_G], &dep);
-    } else {
-        dbg_strcpy(CLSTR(msg), STR("discrete transfer"));
-        
-        ofs = gpu_buf_alloc(GPU_BI_T, sz);
-        if (ofs == Max_u64)
-            goto bufcpy_fail;
-        
-        ofs = gpu_bufcpy(cmd[GPU_CI_T], ofs, sz, GPU_BI_T, GPU_BI_G);
-        if (ofs == Max_u64)
-            goto bufcpy_fail;
-        
-        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
-        
-        VkMemoryBarrier2 barr[GPU_CMD_CNT] = {
-            [GPU_CI_T] = {
-                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-            },
-            [GPU_CI_G] = {
-                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT,
-                .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
-            }
-        };
-        
-        VkDependencyInfo dep[GPU_CMD_CNT] = {
-            [GPU_CI_T] = {
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .memoryBarrierCount = 1,
-                .pMemoryBarriers = &barr[GPU_CI_T],
-            },
-            [GPU_CI_G] = {
-                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .memoryBarrierCount = 1,
-                .pMemoryBarriers = &barr[GPU_CI_G],
-            }
-        };
-        
-        vk_cmd_pl_barr(cmd[GPU_CI_T], &dep[GPU_CI_T]);
-        vk_cmd_pl_barr(cmd[GPU_CI_G], &dep[GPU_CI_G]);
-        vk_end_cmd(cmd[GPU_CI_T]);
-    }
-    
-    VkRect2D ra = {};
-    memset(&ra.offset, 0x7f, sizeof(ra.offset));
-    memset(&ra.extent, 0x00, sizeof(ra.extent));
-    for(u32 i=0; i < gpu->db.used; ++i) {
-        if (gpu->db.di[i].pd.ofs.x < ra.offset.x)
-            ra.offset.x = gpu->db.di[i].pd.ofs.x;
-        if (gpu->db.di[i].pd.ofs.y < ra.offset.y)
-            ra.offset.y = gpu->db.di[i].pd.ofs.y;
-        if (gpu->db.di[i].pd.ext.w > ra.extent.width)
-            ra.extent.width = gpu->db.di[i].pd.ext.w;
-        if (gpu->db.di[i].pd.ext.h > ra.extent.height)
-            ra.extent.height = gpu->db.di[i].pd.ext.h;
-    }
-    
-    // Seems to tightly fit render area to cells
-    ra.offset.x = (s32)roundf((f32)ra.offset.x / 65535.0f * (f32)win->dim.w);
-    ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h);
-    ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w);
-    ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h);
-    
-    VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
-    
-    VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    rbi.renderPass = gpu->rp;
-    rbi.framebuffer = gpu->fb[frm_i];
-    rbi.renderArea = ra;
-    rbi.clearValueCount = 1;
-    rbi.pClearValues = &cv;
-    
-    VkSubpassBeginInfo sbi = {
-        .sType = VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO,
-        .contents = VK_SUBPASS_CONTENTS_INLINE,
-    };
-    
-    VkViewport vp;
-    vp.x = 0.0f;
-    vp.y = 0.0f;
-    vp.width = (f32)win->dim.w;
-    vp.height = (f32)win->dim.h;
-    vp.minDepth = 0.0f;
-    vp.maxDepth = 1.0f;
-    
-    VkCommandBuffer gcmd = cmd[GPU_CI_G];
-    vk_cmd_begin_rp(gcmd, &rbi, &sbi);
-    vk_cmd_bind_pl(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pl);
-    vk_cmd_set_viewport(gcmd, 0, 1, &vp);
-    vk_cmd_set_scissor(gcmd, 0, 1, &ra);
-    vk_cmd_bind_ds(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pll, 0, 1, &gpu->ds);
-    vk_cmd_bind_vb(gcmd, 0, 1, &gpu->buf[GPU_BI_G].handle, &ofs);
-    vk_cmd_draw(gcmd, 6, gpu->db.used);
-    vk_cmd_end_rp(gcmd);
-    vk_end_cmd(gcmd);
-    
-    if ((gpu->flags & GPU_MEM_UNI) == false && gpu->q[GPU_QI_T].i != gpu->q[GPU_QI_G].i) {
-        enum {WTR,WSC};
-        VkSemaphore w_sem[] = {
-            [WTR] = gpu->db.sem[DB_SI_T],
-            [WSC] = gpu->sc.sem[gpu->sc.i],
-        };
-        VkPipelineStageFlags w_stg[] = {
-            [WTR] = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        };
-        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        gsi.waitSemaphoreCount = cl_array_size(w_sem);
-        gsi.pWaitSemaphores = w_sem;
-        gsi.pWaitDstStageMask = w_stg;
-        gsi.commandBufferCount = 1;
-        gsi.pCommandBuffers = &cmd[GPU_CI_G];
-        gsi.signalSemaphoreCount = 1;
-        gsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_G];
-        
-        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        tsi.commandBufferCount = 1;
-        tsi.pCommandBuffers = &cmd[GPU_CI_T];
-        tsi.signalSemaphoreCount = 1;
-        tsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_T];
-        
-        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
-            log_error("Failed to submit transfer commands");
-            return -1;
-        }
-        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
-            log_error("Failed to submit graphics commands");
-            return -1;
-        }
-    } else {
-        enum {WSC};
-        VkSemaphore w_sem[] = {
-            [WSC] = gpu->sc.sem[gpu->sc.i],
-        };
-        VkPipelineStageFlags w_stg[] = {
-            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        };
-        
-        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        gsi.waitSemaphoreCount = cl_array_size(w_sem);
-        gsi.pWaitSemaphores = w_sem;
-        gsi.pWaitDstStageMask = w_stg;
-        gsi.commandBufferCount = 1;
-        gsi.pCommandBuffers = &cmd[GPU_CI_G];
-        gsi.signalSemaphoreCount = 1;
-        gsi.pSignalSemaphores = &gpu->db.sem[DB_SI_G];
-        
-        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
-            log_error("Failed to submit graphics commands");
-            return -1;
-        }
-    }
-    gpu->db.in_use_fences |= 1 << frm_i;
-    
-    VkResult r;
-    VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-    pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &gpu->db.sem[DB_SI_G];
-    pi.swapchainCount = 1;
-    pi.pSwapchains = &gpu->sc.handle;
-    pi.pImageIndices = &gpu->sc.img_i[gpu->sc.i];
-    pi.pResults = &r;
-    
-    if (vk_qpres(&pi)) {
-        println("QueuePresent was not VK_SUCCESS, requesting window resize");
-        win->flags |= WIN_RSZ;
-        return -1;
-    }
-    
-    return 0;
-    
-    bufcpy_fail:
-    log_error("Failed to allocate gpu memory for flushing draw buffer (%s)", msg);
-    return -1;
-}
-
-int gpu_handle_win_resize(void)
-{
-    println("GPU handling resize");
-    
-    if (gpu_create_sc()) {
-        log_error("Failed to retire old swapchain, retrying from scratch...");
-        if (gpu_create_sc()) {
-            log_error("Failed to create fresh swapchain");
-            return -1;
-        }
-    }
-    if (gpu_create_mem()) {
-        log_error("Failed to create memory objects on window resize");
-        return -1;
-    }
-    if (gpu_create_ds()) {
-        log_error("Failed to allocate descriptor sets after window resize");
-        return -1;
-    }
-    return 0;
-}
-
 /*******************************************************************/
 // Header functions
 
@@ -1916,16 +1631,35 @@ def_gpu_create_sh(gpu_create_sh)
     return res;
 }
 
-def_gpu_update(gpu_update)
+def_gpu_handle_win_resize(gpu_handle_win_resize)
 {
-    if (win->flags & WIN_RSZ) {
-        gpu_db_await_and_reset_in_use_fences(); // this is cooler than DeviceWaitIdle
-        if (gpu_handle_win_resize()) {
-            log_error("Failed to handle window resize");
+    println("GPU handling resize");
+    
+    gpu_db_await_and_reset_in_use_fences(); // this is cooler than DeviceWaitIdle
+    
+    if (gpu_create_sc()) {
+        log_error("Failed to retire old swapchain, retrying from scratch...");
+        if (gpu_create_sc()) {
+            log_error("Failed to create fresh swapchain");
             return -1;
         }
-        vk_await_fences(1, &GPU_GLYPH_FENCE_HANDLE, true);
     }
+    if (gpu_create_mem()) {
+        log_error("Failed to create memory objects on window resize");
+        return -1;
+    }
+    if (gpu_create_ds()) {
+        log_error("Failed to allocate descriptor sets after window resize");
+        return -1;
+    }
+    vk_await_fences(1, &GPU_GLYPH_FENCE_HANDLE, true);
+    return 0;
+}
+
+def_gpu_update(gpu_update)
+{
+    if (gpu->db.used == 0)
+        return 0;
     
     gpu_inc_frame();
     gpu_db_await_fence(frm_i);
@@ -1941,7 +1675,6 @@ def_gpu_update(gpu_update)
         vk_reset_cmdpool(gpu_cmd(i).pool, 0x0);
         gpu_dealloc_cmds(i);
     }
-    gpu->db.used = 0;
     
     for(u32 i=0; i < GPU_BUF_CNT; ++i) {
         if ((gpu->flags & GPU_MEM_OFS) == false) {
@@ -1954,6 +1687,7 @@ def_gpu_update(gpu_update)
     }
     gpu->flags ^= GPU_MEM_OFS;
     
+#if 0
     {
         struct rgba fg = {0, 0, 0, 255};
         struct rgba bg = {250, 250, 250, CH_a};
@@ -1964,10 +1698,279 @@ def_gpu_update(gpu_update)
         r.ext.h = gpu->cell.dim_px.h;
         
         gpu_db_add(r, fg, bg);
-        gpu_db_flush();
+    }
+#endif
+    
+    gpu_db_flush();
+    
+    return 0;
+}
+
+def_gpu_db_add(gpu_db_add)
+{
+    if (gpu->db.used == gpu->cell.cnt)
+        return -1;
+    
+    struct rect_u16 win_rect = {.ext = win->dim};
+    rect_clamp(rect, win_rect);
+    
+    gpu->db.di[gpu->db.used].pd = gpu_normalize_px_rect(rect);
+    gpu->db.di[gpu->db.used].bg = bg;
+    gpu->db.di[gpu->db.used].fg = fg;
+    gpu->db.used += 1;
+    
+    // makes the following calculations generally more concise
+    rect.ext.w += rect.ofs.x;
+    rect.ext.h += rect.ofs.y;
+    struct rect_u16 cr = gpu_px_to_cell_rect(rect);
+    
+    for(u32 x = (u32)cr.ofs.x + (u32)cr.ofs.y * gpu->cell.win_dim_cells.w;
+        x < (u32)cr.ext.w + (u32)(cr.ext.h-1) * gpu->cell.win_dim_cells.w;
+        x += gpu->cell.win_dim_cells.w)
+    {
+        for(u32 i = x; i < x + (cr.ext.w - cr.ofs.x); ++i)
+            large_set_add(gpu->db.occupado, i);
     }
     
     return 0;
+}
+
+def_gpu_db_flush(gpu_db_flush)
+{
+    char msg[127];
+    VkCommandBuffer cmd[GPU_CMD_CNT];
+    if (gpu->flags & GPU_MEM_UNI) {
+        u32 cmdi = gpu_alloc_cmds(GPU_QI_G, 1);
+        if (cmdi == Max_u32) {
+            log_error("Failed to allocate graphics command buffer for flushing draw buffer");
+            return -1;
+        }
+        cmd[GPU_CI_G] = gpu_cmd(GPU_CI_G).bufs[cmdi];
+        vk_begin_cmd(cmd[GPU_CI_G], GPU_CMD_OT);
+    } else {
+        for(u32 i=0; i < GPU_CMD_CNT; ++i) {
+            u32 cmdi = gpu_alloc_cmds(i, 1);
+            if (cmdi == Max_u32) {
+                log_error("Failed to allocate command buffer %u (%s) for flushing draw buffer", gpu_cmd_name(i));
+                return -1;
+            }
+            cmd[i] = gpu_cmd(GPU_CI_G).bufs[cmdi];
+        }
+        for(u32 i=0; i < GPU_CMD_CNT; ++i)
+            vk_begin_cmd(cmd[i], GPU_CMD_OT);
+    }
+    
+    u64 ofs;
+    u64 sz = sizeof(*gpu->db.di) * gpu->db.used;
+    if (gpu->flags & GPU_MEM_UNI) {
+        ofs = gpu_buf_alloc(GPU_BI_G, sz);
+        if (ofs == Max_u64) {
+            dbg_strcpy(CLSTR(msg), STR("unified memory architecture"));
+            goto bufcpy_fail;
+        }
+        memcpy((u8*)gpu->buf[GPU_BI_G].data + ofs, gpu->db.di, sz);
+    } else if (gpu->q[GPU_QI_T].i == gpu->q[GPU_QI_G].i) {
+        dbg_strcpy(CLSTR(msg), STR("non-discrete transfer"));
+        
+        ofs = gpu_buf_alloc(GPU_BI_T, sz);
+        if (ofs == Max_u64) {
+            goto bufcpy_fail;
+        }
+        
+        ofs = gpu_bufcpy(cmd[GPU_CI_G], ofs, sz, GPU_BI_T, GPU_BI_G);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
+        
+        VkMemoryBarrier2 barr = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        barr.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        barr.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        barr.dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT;
+        barr.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        
+        VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &barr;
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &dep);
+    } else {
+        dbg_strcpy(CLSTR(msg), STR("discrete transfer"));
+        
+        ofs = gpu_buf_alloc(GPU_BI_T, sz);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        ofs = gpu_bufcpy(cmd[GPU_CI_T], ofs, sz, GPU_BI_T, GPU_BI_G);
+        if (ofs == Max_u64)
+            goto bufcpy_fail;
+        
+        memcpy((u8*)gpu->buf[GPU_BI_T].data + ofs, gpu->db.di, sz);
+        
+        VkMemoryBarrier2 barr[GPU_CMD_CNT] = {
+            [GPU_CI_T] = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                .dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            },
+            [GPU_CI_G] = {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT,
+                .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+            }
+        };
+        
+        VkDependencyInfo dep[GPU_CMD_CNT] = {
+            [GPU_CI_T] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = &barr[GPU_CI_T],
+            },
+            [GPU_CI_G] = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .memoryBarrierCount = 1,
+                .pMemoryBarriers = &barr[GPU_CI_G],
+            }
+        };
+        
+        vk_cmd_pl_barr(cmd[GPU_CI_T], &dep[GPU_CI_T]);
+        vk_cmd_pl_barr(cmd[GPU_CI_G], &dep[GPU_CI_G]);
+        vk_end_cmd(cmd[GPU_CI_T]);
+    }
+    
+    VkRect2D ra = {};
+    memset(&ra.offset, 0x7f, sizeof(ra.offset));
+    memset(&ra.extent, 0x00, sizeof(ra.extent));
+    for(u32 i=0; i < gpu->db.used; ++i) {
+        if (gpu->db.di[i].pd.ofs.x < ra.offset.x)
+            ra.offset.x = gpu->db.di[i].pd.ofs.x;
+        if (gpu->db.di[i].pd.ofs.y < ra.offset.y)
+            ra.offset.y = gpu->db.di[i].pd.ofs.y;
+        if (gpu->db.di[i].pd.ext.w > ra.extent.width)
+            ra.extent.width = gpu->db.di[i].pd.ext.w;
+        if (gpu->db.di[i].pd.ext.h > ra.extent.height)
+            ra.extent.height = gpu->db.di[i].pd.ext.h;
+    }
+    
+    // Seems to tightly fit render area to cells
+    ra.offset.x = (s32)roundf((f32)ra.offset.x / 65535.0f * (f32)win->dim.w);
+    ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h);
+    ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w);
+    ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h);
+    
+    VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
+    
+    VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    rbi.renderPass = gpu->rp;
+    rbi.framebuffer = gpu->fb[frm_i];
+    rbi.renderArea = ra;
+    rbi.clearValueCount = 1;
+    rbi.pClearValues = &cv;
+    
+    VkSubpassBeginInfo sbi = {
+        .sType = VK_STRUCTURE_TYPE_SUBPASS_BEGIN_INFO,
+        .contents = VK_SUBPASS_CONTENTS_INLINE,
+    };
+    
+    VkViewport vp;
+    vp.x = 0.0f;
+    vp.y = 0.0f;
+    vp.width = (f32)win->dim.w;
+    vp.height = (f32)win->dim.h;
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    
+    VkCommandBuffer gcmd = cmd[GPU_CI_G];
+    vk_cmd_begin_rp(gcmd, &rbi, &sbi);
+    vk_cmd_bind_pl(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pl);
+    vk_cmd_set_viewport(gcmd, 0, 1, &vp);
+    vk_cmd_set_scissor(gcmd, 0, 1, &ra);
+    vk_cmd_bind_ds(gcmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pll, 0, 1, &gpu->ds);
+    vk_cmd_bind_vb(gcmd, 0, 1, &gpu->buf[GPU_BI_G].handle, &ofs);
+    vk_cmd_draw(gcmd, 6, gpu->db.used);
+    vk_cmd_end_rp(gcmd);
+    vk_end_cmd(gcmd);
+    
+    if ((gpu->flags & GPU_MEM_UNI) == false && gpu->q[GPU_QI_T].i != gpu->q[GPU_QI_G].i) {
+        enum {WTR,WSC};
+        VkSemaphore w_sem[] = {
+            [WTR] = gpu->db.sem[DB_SI_T],
+            [WSC] = gpu->sc.sem[gpu->sc.i],
+        };
+        VkPipelineStageFlags w_stg[] = {
+            [WTR] = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        };
+        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        gsi.waitSemaphoreCount = cl_array_size(w_sem);
+        gsi.pWaitSemaphores = w_sem;
+        gsi.pWaitDstStageMask = w_stg;
+        gsi.commandBufferCount = 1;
+        gsi.pCommandBuffers = &cmd[GPU_CI_G];
+        gsi.signalSemaphoreCount = 1;
+        gsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_G];
+        
+        VkSubmitInfo tsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        tsi.commandBufferCount = 1;
+        tsi.pCommandBuffers = &cmd[GPU_CI_T];
+        tsi.signalSemaphoreCount = 1;
+        tsi.pSignalSemaphores = &gpu->db.sem[GPU_CI_T];
+        
+        if (vk_qsub(gpu->q[GPU_QI_T].handle, 1, &tsi, VK_NULL_HANDLE)) {
+            log_error("Failed to submit transfer commands");
+            return -1;
+        }
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
+            log_error("Failed to submit graphics commands");
+            return -1;
+        }
+    } else {
+        enum {WSC};
+        VkSemaphore w_sem[] = {
+            [WSC] = gpu->sc.sem[gpu->sc.i],
+        };
+        VkPipelineStageFlags w_stg[] = {
+            [WSC] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        };
+        
+        VkSubmitInfo gsi = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        gsi.waitSemaphoreCount = cl_array_size(w_sem);
+        gsi.pWaitSemaphores = w_sem;
+        gsi.pWaitDstStageMask = w_stg;
+        gsi.commandBufferCount = 1;
+        gsi.pCommandBuffers = &cmd[GPU_CI_G];
+        gsi.signalSemaphoreCount = 1;
+        gsi.pSignalSemaphores = &gpu->db.sem[DB_SI_G];
+        
+        if (vk_qsub(gpu->q[GPU_QI_G].handle, 1, &gsi, gpu->db.fence[frm_i])) {
+            log_error("Failed to submit graphics commands");
+            return -1;
+        }
+    }
+    
+    gpu->db.in_use_fences |= 1 << frm_i;
+    gpu->db.used = 0;
+    
+    VkResult r;
+    VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores = &gpu->db.sem[DB_SI_G];
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &gpu->sc.handle;
+    pi.pImageIndices = &gpu->sc.img_i[gpu->sc.i];
+    pi.pResults = &r;
+    
+    if (vk_qpres(&pi)) {
+        println("QueuePresent was not VK_SUCCESS, requesting window resize");
+        win->flags |= WIN_RSZ;
+        return -1;
+    }
+    
+    return 0;
+    
+    bufcpy_fail:
+    log_error("Failed to allocate gpu memory for flushing draw buffer (%s)", msg);
+    return -1;
 }
 
 def_gpu_check_leaks(gpu_check_leaks)
