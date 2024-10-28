@@ -122,7 +122,7 @@ struct gpu {
     VkPipelineLayout pll;
     VkPipeline pl;
     VkRenderPass rp;
-    VkFramebuffer fb[SC_MAX_IMGS];
+    VkFramebuffer fb[FRAME_WRAP];
     
     VkDescriptorSetLayout dsl;
     VkDescriptorPool dp;
@@ -142,6 +142,7 @@ struct gpu {
         } *di;
         u32 used; // number of occupied draw infos
         u32 in_use_fences; // bit mask
+        VkSampleCountFlags msaa_samples;
     } db;
 };
 
@@ -183,6 +184,11 @@ enum cell_vertex_fmts {
     CELL_GL_FMT = VK_FORMAT_R8_UNORM,
 };
 
+enum gpu_fb_attachment_indices {
+    GPU_FB_AI_MSAA, // msaa color
+    GPU_FB_AI_SWAP, // swapchain image resolve
+};
+
 extern u32 gpu_bi_to_mi[GPU_BUF_CNT];
 extern u32 gpu_ci_to_qi[GPU_CMD_CNT];
 extern char* gpu_mem_names[GPU_MEM_CNT];
@@ -196,8 +202,6 @@ extern char *gpu_cmdq_names[GPU_CMD_CNT];
 #define gpu_dba_sz(cc) (sizeof(*gpu->db.di) * cc)
 
 #define GPU_GLYPH_FENCE_HANDLE gpu->db.fence[0]
-
-#define MSAA_RT_FMT VK_FORMAT_R8G8B8A8_SRGB
 
 #endif // ifdef LIB
 

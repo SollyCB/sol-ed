@@ -309,11 +309,11 @@ internal int gpu_create_mem(void)
             {
                 VkImageCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
                 ci.imageType = VK_IMAGE_TYPE_2D;
-                ci.format = MSAA_RT_FMT;
+                ci.format = gpu->sc.info.imageFormat;
                 ci.extent = (VkExtent3D) {.width = e.w, .height = e.h, .depth = 1};
                 ci.mipLevels = 1;
                 ci.arrayLayers = 1;
-                ci.samples = VK_SAMPLE_COUNT_4_BIT;
+                ci.samples = gpu->db.msaa_samples;
                 ci.tiling = VK_IMAGE_TILING_OPTIMAL;
                 ci.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT|VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
                 
@@ -351,7 +351,7 @@ internal int gpu_create_mem(void)
             {
                 VkImageViewCreateInfo ci = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
                 ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-                ci.format = MSAA_RT_FMT;
+                ci.format = gpu->sc.info.imageFormat;
                 ci.subresourceRange = (VkImageSubresourceRange){.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1};
                 for(u32 i=0; i < cl_array_size(gpu->db.img); ++i) {
                     ci.image = gpu->db.img[i];
@@ -437,7 +437,7 @@ internal int gpu_create_mem(void)
         VkMemoryRequirements mr[CHT_SZ];
         
         for(u32 i=0; i < cl_array_size(bm); ++i) {
-            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
+            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_FIDELITY),
                                              cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &g[i].x, &g[i].y);
             
             
@@ -498,10 +498,12 @@ internal int gpu_create_mem(void)
                 goto fail_free_img_mem;
             }
         }
+        
+        println("Bytes required to store font %u", img_sz);
     }
     
-    //max_w += 1; // 1px padding between char cells
-    //max_h += 1;
+    max_w = (u32)((f32)max_w * ((f32)FONT_HEIGHT / FONT_FIDELITY));
+    max_h = (u32)((f32)max_h * ((f32)FONT_HEIGHT / FONT_FIDELITY));
     
     struct extent_u16 win_dim_cells;
     win_dim_cells.w = (u16)ceilf((f32)win->dim.w / max_w);
@@ -717,10 +719,9 @@ internal int gpu_create_mem(void)
         }
     }
     
-    // @TODO CurrentTask: At this stage in the program, all memory objects have been
     // successfully created, so now we need to:
     //     - destroy the old objects
-    //     - upload the glyph data to the gpu
+    //     - assign the new objects
     
     gpu->flags &= ~GPU_MEM_OFS;
     
@@ -731,6 +732,7 @@ internal int gpu_create_mem(void)
     create_large_set(cell_cnt, (u64*)((u8*)db + gpu_dba_sz(cell_cnt)), NULL, &gpu->db.occupado);
     
     for(u32 i=0; i < GPU_MEM_CNT; ++i) {
+        if (i == GPU_MI_R) continue; // do not free msaa image memory (it never needs to resize)
         if (gpu->mem[i].handle)
             vk_free_mem(gpu->mem[i].handle);
         gpu->mem[i].handle = mem[i];
@@ -1035,25 +1037,42 @@ internal int gpu_create_ds(void)
 
 internal int gpu_create_rp(void)
 {
-    local_persist VkAttachmentDescription a = {
-        .samples = VK_SAMPLE_COUNT_1_BIT,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    local_persist VkAttachmentDescription a[] = {
+        [GPU_FB_AI_MSAA] = {
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE, // TODO(SollyCB): I think this can be store don't care
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        },
+        [GPU_FB_AI_SWAP] = {
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        }
     };
     
-    local_persist VkAttachmentReference ca = {
-        .attachment = 0,
-        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    local_persist VkAttachmentReference ar[] = {
+        [GPU_FB_AI_MSAA] = {
+            .attachment = GPU_FB_AI_MSAA,
+            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        },
+        [GPU_FB_AI_SWAP] = {
+            .attachment = GPU_FB_AI_SWAP,
+            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        }
     };
     
     local_persist VkSubpassDescription s = {
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
-        .pColorAttachments = &ca,
+        .pColorAttachments = &ar[GPU_FB_AI_MSAA],
+        .pResolveAttachments = &ar[GPU_FB_AI_SWAP],
     };
     
     local_persist VkSubpassDependency d = {
@@ -1066,59 +1085,45 @@ internal int gpu_create_rp(void)
         .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
     };
     
-    a.format = gpu->sc.info.imageFormat;
+    a[GPU_FB_AI_MSAA].format = gpu->sc.info.imageFormat;
+    a[GPU_FB_AI_SWAP].format = gpu->sc.info.imageFormat;
+    a[GPU_FB_AI_MSAA].samples = gpu->db.msaa_samples;
     
-    local_persist VkRenderPassCreateInfo ci = {
+    VkRenderPassCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &a,
+        .attachmentCount = cl_array_size(a),
+        .pAttachments = a,
         .subpassCount = 1,
         .pSubpasses = &s,
         .dependencyCount = 1,
         .pDependencies = &d,
     };
     
-    VkRenderPass rp = VK_NULL_HANDLE;
-    if (vk_create_rp(&ci, &rp))
+    if (vk_create_rp(&ci, &gpu->rp))
         return -1;
-    
-    if (gpu->rp)
-        vk_destroy_rp(gpu->rp);
-    gpu->rp = rp;
     
     return 0;
 }
 
-// @TODO CurrentTask Create and destroy a framebuffer at the beginning and end of each
-// frame in order to only use 2 msaa images, rather than one for every swapchain image.
-internal int gpu_create_fb(void)
+internal int gpu_next_fb(void)
 {
-    local_persist VkFramebufferCreateInfo ci = {
-        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        .attachmentCount = 1,
-        .layers = 1,
+    if (gpu->fb[frm_i] != VK_NULL_HANDLE)
+        vk_destroy_fb(gpu->fb[frm_i]);
+    
+    VkImageView a[] = {
+        [GPU_FB_AI_MSAA] = gpu->db.view[frm_i],
+        [GPU_FB_AI_SWAP] = gpu->sc.views[gpu->sc.img_i[gpu->sc.i]],
     };
     
+    VkFramebufferCreateInfo ci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    ci.layers = 1,
     ci.renderPass = gpu->rp,
-    ci.width = gpu->sc.info.imageExtent.width;
-    ci.height = gpu->sc.info.imageExtent.height;
+    ci.width = win->dim.w;
+    ci.height = win->dim.h;
+    ci.attachmentCount = cl_array_size(a),
+    ci.pAttachments = a;
     
-    VkFramebuffer fb[SC_MAX_IMGS];
-    for(u32 i=0; i < gpu->sc.img_cnt; ++i) {
-        ci.pAttachments = &gpu->sc.views[i];
-        if (vk_create_fb(&ci, &fb[i])) {
-            while(--i < Max_u32) vk_destroy_fb(fb[i]);
-            return -1;
-        }
-    }
-    
-    for(u32 i=0; i < gpu->sc.img_cnt; ++i) {
-        if (gpu->fb[i])
-            vk_destroy_fb(gpu->fb[i]);
-        gpu->fb[i] = fb[i];
-    }
-    
-    return 0;
+    return vk_create_fb(&ci, &gpu->fb[frm_i]);
 }
 
 internal int gpu_create_pl(void)
@@ -1200,8 +1205,10 @@ internal int gpu_create_pl(void)
     
     local_persist VkPipelineMultisampleStateCreateInfo ms = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .sampleShadingEnable = VK_TRUE,
+        .minSampleShading = 0.2f,
     };
+    ms.rasterizationSamples = gpu->db.msaa_samples;
     
     local_persist VkPipelineDepthStencilStateCreateInfo ds = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
@@ -1439,7 +1446,7 @@ internal int gpu_db_flush(void)
     
     VkRenderPassBeginInfo rbi = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     rbi.renderPass = gpu->rp;
-    rbi.framebuffer = gpu->fb[gpu->sc.img_i[gpu->sc.i]];
+    rbi.framebuffer = gpu->fb[frm_i];
     rbi.renderArea = ra;
     rbi.clearValueCount = 1;
     rbi.pClearValues = &cv;
@@ -1558,10 +1565,6 @@ int gpu_handle_win_resize(void)
             log_error("Failed to create fresh swapchain");
             return -1;
         }
-    }
-    if (gpu_create_fb()) {
-        log_error("Failed to create framebuffer on window resize");
-        return -1;
     }
     if (gpu_create_mem()) {
         log_error("Failed to create memory objects on window resize");
@@ -1725,12 +1728,16 @@ def_create_gpu(create_gpu)
             .synchronization2 = VK_TRUE,
         };
         
+        VkPhysicalDeviceFeatures df = {};
+        df.sampleRateShading = VK_TRUE;
+        
         VkDeviceCreateInfo ci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         ci.pNext = &feat13;
         ci.queueCreateInfoCount = qc;
         ci.pQueueCreateInfos = qci;
         ci.enabledExtensionCount = cl_array_size(ext_names);
         ci.ppEnabledExtensionNames = ext_names;
+        ci.pEnabledFeatures = &df;
         
         if (vk_create_dev(&ci))
             return -1;
@@ -1796,6 +1803,11 @@ def_create_gpu(create_gpu)
         gpu->sc.info.pQueueFamilyIndices = &gpu->q[GPU_QI_P].i;
         gpu->sc.info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
         
+        for(u32 i=0; i < ctz(VK_SAMPLE_COUNT_64_BIT); ++i) {
+            if (gpu->props.limits.framebufferColorSampleCounts & (1<<i))
+                gpu->db.msaa_samples = 1<<i;
+        }
+        
         if (gpu_create_sc())
             return -1;
     }
@@ -1806,7 +1818,6 @@ def_create_gpu(create_gpu)
     gpu_create_pll();
     gpu_create_ds();
     gpu_create_rp();
-    gpu_create_fb();
     gpu_create_pl();
     
     // Glyph upload should be done by now
@@ -1918,14 +1929,14 @@ def_gpu_update(gpu_update)
     
     gpu_inc_frame();
     gpu_db_await_fence(frm_i);
-    
-    if (gpu_sc_next_img()) {
-        println("Gpu skipping frame as next swapchain image was not VK_SUCCESS");
-        return 0;
-    }
-    
+    if (cvk(gpu_sc_next_img()))
+        log_error("Failed to acquire proper image from swapchain");
     gpu_db_reset_fence(frm_i);
     
+    if (gpu_next_fb()) {
+        log_error("Failed to create framebuffer");
+        return -1;
+    }
     for(u32 i=0; i < GPU_CMD_CNT; ++i) {
         vk_reset_cmdpool(gpu_cmd(i).pool, 0x0);
         gpu_dealloc_cmds(i);
@@ -1945,7 +1956,7 @@ def_gpu_update(gpu_update)
     
     {
         struct rgba fg = {0, 0, 0, 255};
-        struct rgba bg = {250, 250, 250, CH_B};
+        struct rgba bg = {250, 250, 250, CH_a};
         struct rect_u16 r;
         r.ofs.x = 0; // gpu->cell.dim_px.w;
         r.ofs.y = 0; // gpu->cell.dim_px.h;
@@ -1993,8 +2004,10 @@ def_gpu_check_leaks(gpu_check_leaks)
     vk_destroy_pll(gpu->pll);
     vk_destroy_pl(gpu->pl);
     vk_destroy_rp(gpu->rp);
-    for(u32 i=0; i < gpu->sc.img_cnt; ++i)
-        vk_destroy_fb(gpu->fb[i]);
+    for(u32 i=0; i < cl_array_size(gpu->fb); ++i) {
+        if (gpu->fb[i])
+            vk_destroy_fb(gpu->fb[i]);
+    }
     
     for(u32 i=0; i < DB_SEM_CNT; ++i)
         vk_destroy_sem(gpu->db.sem[i]);

@@ -110,7 +110,7 @@ def_win_poll(win_poll)
                     
                     case SDL_WINDOWEVENT_MAXIMIZED: {
                         win->flags &= ~WIN_SZ;
-                        win->flags |= WIN_MAX;
+                        win->flags |= WIN_RSZ;
                     } break;
                     
                     case SDL_WINDOWEVENT_ENTER: break;
