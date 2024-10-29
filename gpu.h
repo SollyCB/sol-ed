@@ -93,7 +93,7 @@ struct gpu {
     struct gpu_glyph {
         VkImage img;
         VkImageView view;
-        int x,y,w,h;
+        s16 x,y,w,h;
     } glyph[CHT_SZ];
     
     struct {

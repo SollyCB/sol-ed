@@ -6,6 +6,11 @@
 #define CHT_SZ SH_SI_CNT
 extern char cht[CHT_SZ]; // char table in char.c
 
+static inline u8 char_to_glyph(char c)
+{
+    return c - '!';
+}
+
 enum chars_enum {
     CH_a = 'a' - '!',
     CH_b = 'b' - '!',

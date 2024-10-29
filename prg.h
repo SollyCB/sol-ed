@@ -6,10 +6,15 @@
 #include "gpu.h"
 #include "win.h"
 #include "vdt.h"
+#include "edm.h"
 
 #define FONT_URI "consolab.ttf"
 #define FONT_HEIGHT 13
 #define FONT_FIDELITY 400
+
+// alpha channel of bg holds char index
+#define FG_COL ((struct rgba) {.r = 0, .g = 0, .b = 0, .a = 255})
+#define BG_COL ((struct rgba) {.r = 255, .g = 255, .b = 255, .a = 0})
 
 #define TOTAL_MEM mb(32)
 #define MAX_THREADS 1
@@ -60,6 +65,7 @@ struct program {
     struct gpu gpu;
     struct win win;
     struct vdt vdt;
+    struct edm edm;
     
     u32 flags;
     u32 thread_count;
@@ -79,6 +85,7 @@ struct program {
 #ifdef LIB
 extern struct program *prg;
 
+#define get_thread_alloc(thread_index) prg->allocs[thread_index]
 #define salloc(thread_index, sz) allocate(&prg->allocs[thread_index].scratch, sz)
 #define palloc(thread_index, sz) allocate(&prg->allocs[thread_index].persist, sz)
 #define pfree(thread_index, p) deallocate(&prg->allocs[thread_index].persist, p)

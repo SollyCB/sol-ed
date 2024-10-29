@@ -14,6 +14,7 @@ def_prg_load(prg_load)
     gpu = &prg->gpu;
     win = &prg->win;
     vdt = &prg->vdt;
+    edm = &prg->edm;
     
     prg->fn.create = create_prg;
     prg->fn.should_shutdown = should_prg_shutdown;
@@ -54,6 +55,7 @@ def_create_prg(create_prg)
     
     create_win();
     create_gpu();
+    create_edm();
 }
 
 def_should_prg_shutdown(should_prg_shutdown)
@@ -139,19 +141,8 @@ def_prg_update(prg_update)
         }
     }
     
-    {
-        struct rgba fg = {0, 0, 0, 255};
-        struct rgba bg = {250, 250, 250, CH_B};
-        struct rect_u16 r;
-        r.ofs.x = 0; // gpu->cell.dim_px.w;
-        r.ofs.y = 0; // gpu->cell.dim_px.h;
-        r.ext.w = gpu->cell.dim_px.w;
-        r.ext.h = gpu->cell.dim_px.h;
-        
-        gpu_db_add(r, fg, bg);
-    }
-    
     /* update */
+    edm_update(); // call before gpu otherwise will be frame late
     gpu_update();
     
     /* end frame */

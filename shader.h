@@ -80,7 +80,7 @@ void main() {
     uint c = uint(vf_info.bg.a);
     vec3 bg = vf_info.bg.xyz / 255;
     
-    float g = texture(glyph[c], vf_info.tc).r;
+    float g = texture(glyph[c], vf_info.tc).r * vf_info.fg.a;
     vec3 col = mix(bg, vf_info.fg.rgb, g);
     fc = vec4(col, 1);
 }

@@ -14,3 +14,4 @@
 #include "win.c"
 #include "gpu.c"
 #include "vdt.c"
+#include "edm.c"

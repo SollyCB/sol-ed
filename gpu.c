@@ -439,9 +439,14 @@ internal int gpu_create_mem(void)
         VkMemoryRequirements mr[CHT_SZ];
         
         for(u32 i=0; i < cl_array_size(bm); ++i) {
+            int x,y;
             bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_FIDELITY),
-                                             cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &g[i].x, &g[i].y);
+                                             cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &x, &y);
             
+            g[i].x = (s16)((f32)x * ((f32)FONT_HEIGHT / FONT_FIDELITY));
+            g[i].y = (s16)((f32)y * ((f32)FONT_HEIGHT / FONT_FIDELITY));
+            g[i].w = (s16)((f32)bm_dim[i].w * ((f32)FONT_HEIGHT / FONT_FIDELITY));
+            g[i].h = (s16)((f32)bm_dim[i].h * ((f32)FONT_HEIGHT / FONT_FIDELITY));
             
             bm_sz[i] = bm_dim[i].w * bm_dim[i].h;
             bm_tot += (u32)gpu_buf_align(bm_sz[i]);
@@ -1832,10 +1837,10 @@ def_gpu_db_flush(gpu_db_flush)
             ra.offset.x = gpu->db.di[i].pd.ofs.x;
         if (gpu->db.di[i].pd.ofs.y < ra.offset.y)
             ra.offset.y = gpu->db.di[i].pd.ofs.y;
-        if (gpu->db.di[i].pd.ext.w > ra.extent.width)
-            ra.extent.width = gpu->db.di[i].pd.ext.w;
-        if (gpu->db.di[i].pd.ext.h > ra.extent.height)
-            ra.extent.height = gpu->db.di[i].pd.ext.h;
+        if (gpu->db.di[i].pd.ext.w + (u32)gpu->db.di[i].pd.ofs.x > ra.extent.width)
+            ra.extent.width = gpu->db.di[i].pd.ext.w + gpu->db.di[i].pd.ofs.x;
+        if (gpu->db.di[i].pd.ext.h + (u32)gpu->db.di[i].pd.ofs.y > ra.extent.height)
+            ra.extent.height = gpu->db.di[i].pd.ext.h + gpu->db.di[i].pd.ofs.y;
     }
     
     // Seems to tightly fit render area to cells
@@ -1843,6 +1848,11 @@ def_gpu_db_flush(gpu_db_flush)
     ra.offset.y = (s32)roundf((f32)ra.offset.y / 65535.0f * (f32)win->dim.h);
     ra.extent.width = (s32)roundf((f32)ra.extent.width / 65535.0f * (f32)win->dim.w);
     ra.extent.height = (s32)roundf((f32)ra.extent.height / 65535.0f * (f32)win->dim.h);
+    
+    if (ra.offset.x > 0) ra.offset.x -= 1;
+    if (ra.offset.y > 0) ra.offset.y -= 1;
+    if (ra.extent.width < win->dim.w) ra.extent.width += 2;
+    if (ra.extent.height < win->dim.h) ra.extent.height += 2;
     
     VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
     
