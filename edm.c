@@ -12,26 +12,22 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
     return (struct fgbg) {.fg = fg, .bg = bg};
 }
 
-#define CHAR_PAD_RIGHT 0
-#define CHAR_PAD_BOTTOM 0
-
 // @Todo Maybe I want to tightly pack chars rather than having a consistent cell width? Idk what is most readable.
 static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, char c) {
+    struct rect_u16 r = {};
     if (is_whitechar(c)) {
-        return (struct rect_u16) {
-            .ofs.x = (gpu->cell.dim_px.w + CHAR_PAD_RIGHT) * col,
-            .ofs.y = (gpu->cell.dim_px.h + CHAR_PAD_BOTTOM) * row,
-            .ext.w = gpu->cell.dim_px.w,
-            .ext.h = gpu->cell.dim_px.h,
-        };
+        r.ofs.x = gpu->cell.dim_px.w * col;
+        r.ofs.y = gpu->cell.dim_px.h * row;
+        r.ext.w = gpu->cell.dim_px.w;
+        r.ext.h = gpu->cell.dim_px.h;
+        return r;
     } else {
         u32 i = char_to_glyph(c);
-        return (struct rect_u16) {
-            .ofs.x = (gpu->cell.dim_px.w + CHAR_PAD_RIGHT) * col + gpu->glyph[i].x,
-            .ofs.y = (gpu->cell.dim_px.h + CHAR_PAD_BOTTOM) * row + gpu->cell.dim_px.h - gpu->glyph[i].h + (gpu->glyph[i].h + gpu->glyph[i].y),
-            .ext.w = gpu->glyph[i].w,
-            .ext.h = gpu->glyph[i].h,
-        };
+        r.ofs.x = gpu->cell.dim_px.w * col + gpu->glyph[i].x;
+        r.ofs.y = gpu->cell.dim_px.h * (row+1) + gpu->glyph[i].y;
+        r.ext.w = gpu->glyph[i].w;
+        r.ext.h = gpu->glyph[i].h;
+        return r;
     }
 }
 
@@ -57,7 +53,7 @@ def_create_edm(create_edm)
 
 def_edm_update(edm_update)
 {
-    struct string str = STR("Um, Hello World! This is a really long string to test whether the renderpass will have problems now because I think that it should not");
+    struct string str = STR("Um, Hello World!\nThis is a really long string to test whether the renderpass will have problems now because I think that it should not");
     //struct string str = STR("the quick brown fox");
     
     u16 lc=0,cc=0;
