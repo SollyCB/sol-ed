@@ -304,6 +304,7 @@ internal int gpu_create_mem(void)
         for(u32 i=0; i < GPU_MEM_CNT; ++i)
             types[i] = gpu_memtype_helper(mr[i].memoryTypeBits, req_type_bits[i]);
         
+#if MSAA
         if (gpu->db.img[0] == VK_NULL_HANDLE) {
             struct extent_u32 e;
             if (win_screen_extent(&e)) {
@@ -381,6 +382,7 @@ internal int gpu_create_mem(void)
             return -1;
         }
         success_msaa:
+#endif
         
         // Only update state when nothing can fail
         for(u32 i=0; i < GPU_MEM_CNT; ++i)

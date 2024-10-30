@@ -9,14 +9,14 @@
 #include "edm.h"
 
 #define FONT_URI "fonts/liberation-mono.ttf"
-#define FONT_HEIGHT 15
+#define FONT_HEIGHT 20
 
 // alpha channel of bg holds char index
 #define FG_COL ((struct rgba) {.r = 0, .g = 0, .b = 0, .a = 255})
 #define BG_COL ((struct rgba) {.r = 255, .g = 255, .b = 255, .a = 0})
 
 #define TOTAL_MEM mb(32)
-#define MAX_THREADS 1
+#define MAX_THREADS 1 /* 1 == only main thread */
 #define MT 0
 
 #define MAIN_THREAD_SCRATCH_SIZE (TOTAL_MEM >> 2)

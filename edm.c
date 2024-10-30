@@ -12,19 +12,22 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
     return (struct fgbg) {.fg = fg, .bg = bg};
 }
 
-// @Todo Maybe I want to tightly pack chars rather than having a consistent cell width? Idk what is most readable.
+#define EDM_ROW_PAD 1 /* padding between rows in pixels */
+
+// @Todo Maybe I want to tightly pack chars rather than having a
+// consistent cell width? Idk what is most readable.
 static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, char c) {
     struct rect_u16 r = {};
     if (is_whitechar(c)) {
         r.ofs.x = gpu->cell.dim_px.w * col;
-        r.ofs.y = gpu->cell.dim_px.h * row;
+        r.ofs.y = (gpu->cell.dim_px.h + EDM_ROW_PAD) * row;
         r.ext.w = gpu->cell.dim_px.w;
         r.ext.h = gpu->cell.dim_px.h;
         return r;
     } else {
         u32 i = char_to_glyph(c);
         r.ofs.x = gpu->cell.dim_px.w * col + gpu->glyph[i].x;
-        r.ofs.y = gpu->cell.dim_px.h * (row+1) + gpu->glyph[i].y;
+        r.ofs.y = (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
         r.ext.w = gpu->glyph[i].w;
         r.ext.h = gpu->glyph[i].h;
         return r;
@@ -51,10 +54,41 @@ def_create_edm(create_edm)
     return 0;
 }
 
+char edm_test_string[] = "\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+";
+
 def_edm_update(edm_update)
 {
-    struct string str = STR("Um, Hello World!\nThis is a really long string to test whether the renderpass will have problems now because I think that it should not");
-    //struct string str = STR("the quick brown fox");
+    struct string str = CLSTR(edm_test_string);
     
     u16 lc=0,cc=0;
     for(u32 i=0; i < str.size; ++i) {
@@ -73,7 +107,5 @@ def_edm_update(edm_update)
             gpu_db_add(r, col.fg, col.bg);
         
     }
-    
-    
     return 0;
 }

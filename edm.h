@@ -12,7 +12,8 @@ struct editor_file {
     u32 cursor_pos; // char that the cursor is on
     u32 view_pos; // char that is the top left corner of the view
     struct rect_u16 view; // pixel region on screen that the view is rendered to
-    char *data;
+    struct string data;
+    struct string uri;
 };
 def_typed_array(edf, struct editor_file)
 
