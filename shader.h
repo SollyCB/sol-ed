@@ -20,6 +20,7 @@
 #if GL_core_profile /* search token for gpu_compile_sh */
 
 #extension GL_EXT_debug_printf : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 struct vf_info_t {
     vec4 fg;
@@ -80,7 +81,7 @@ void main() {
     uint c = uint(vf_info.bg.a);
     vec3 bg = vf_info.bg.xyz / 255;
     
-    float g = texture(glyph[c], vf_info.tc).r * vf_info.fg.a;
+    float g = texture(glyph[nonuniformEXT(c)], vf_info.tc).r * vf_info.fg.a;
     vec3 col = mix(bg, vf_info.fg.rgb, g);
     fc = vec4(col, 1);
 }

@@ -1,5 +1,8 @@
 #include "external/stb_truetype.h"
 
+// Does not seem to effect font fidelity
+#define MSAA 0
+
 #include "prg.h"
 #include "win.h"
 #include "gpu.h"
@@ -440,13 +443,13 @@ internal int gpu_create_mem(void)
         
         for(u32 i=0; i < cl_array_size(bm); ++i) {
             int x,y;
-            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_FIDELITY),
+            bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
                                              cht[i], (int*)&bm_dim[i].w, (int*)&bm_dim[i].h, &x, &y);
             
-            g[i].x = (s16)((f32)x * ((f32)FONT_HEIGHT / FONT_FIDELITY));
-            g[i].y = (s16)((f32)y * ((f32)FONT_HEIGHT / FONT_FIDELITY));
-            g[i].w = (s16)((f32)bm_dim[i].w * ((f32)FONT_HEIGHT / FONT_FIDELITY));
-            g[i].h = (s16)((f32)bm_dim[i].h * ((f32)FONT_HEIGHT / FONT_FIDELITY));
+            g[i].x = (s16)x;
+            g[i].y = (s16)y;
+            g[i].w = (s16)bm_dim[i].w;
+            g[i].h = (s16)bm_dim[i].h;
             
             bm_sz[i] = bm_dim[i].w * bm_dim[i].h;
             bm_tot += (u32)gpu_buf_align(bm_sz[i]);
@@ -509,12 +512,9 @@ internal int gpu_create_mem(void)
         println("Bytes required to store font %u", img_sz);
     }
     
-    max_w = (u32)((f32)max_w * ((f32)FONT_HEIGHT / FONT_FIDELITY));
-    max_h = (u32)((f32)max_h * ((f32)FONT_HEIGHT / FONT_FIDELITY));
-    
     struct extent_u16 win_dim_cells;
-    win_dim_cells.w = (u16)ceilf((f32)win->dim.w / max_w);
-    win_dim_cells.h = (u16)ceilf((f32)win->dim.h / max_h);
+    win_dim_cells.w = (u16)floorf((f32)win->dim.w / max_w);
+    win_dim_cells.h = (u16)floorf((f32)win->dim.h / max_h);
     u32 cell_cnt = win_dim_cells.w * win_dim_cells.h;
     u32 vert_sz = sizeof(*gpu->db.di) * cell_cnt * 2; // size for 2 frames
     
@@ -1044,6 +1044,7 @@ internal int gpu_create_ds(void)
 
 internal int gpu_create_rp(void)
 {
+#if MSAA
     local_persist VkAttachmentDescription a[] = {
         [GPU_FB_AI_MSAA] = {
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -1095,6 +1096,44 @@ internal int gpu_create_rp(void)
     a[GPU_FB_AI_MSAA].format = gpu->sc.info.imageFormat;
     a[GPU_FB_AI_SWAP].format = gpu->sc.info.imageFormat;
     a[GPU_FB_AI_MSAA].samples = gpu->db.msaa_samples;
+#else
+    local_persist VkAttachmentDescription a[] = {
+        {
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        }
+    };
+    
+    local_persist VkAttachmentReference ar[] = {
+        {
+            .attachment = 0,
+            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        }
+    };
+    
+    local_persist VkSubpassDescription s = {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = ar,
+    };
+    
+    local_persist VkSubpassDependency d = {
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+    };
+    
+    a[0].format = gpu->sc.info.imageFormat;
+#endif
     
     VkRenderPassCreateInfo ci = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -1117,10 +1156,16 @@ internal int gpu_next_fb(void)
     if (gpu->fb[frm_i] != VK_NULL_HANDLE)
         vk_destroy_fb(gpu->fb[frm_i]);
     
+#if MSAA
     VkImageView a[] = {
         [GPU_FB_AI_MSAA] = gpu->db.view[frm_i],
         [GPU_FB_AI_SWAP] = gpu->sc.views[gpu->sc.img_i[gpu->sc.i]],
     };
+#else
+    VkImageView a[] = {
+        gpu->sc.views[gpu->sc.img_i[gpu->sc.i]],
+    };
+#endif
     
     VkFramebufferCreateInfo ci = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     ci.layers = 1,
@@ -1215,7 +1260,12 @@ internal int gpu_create_pl(void)
         .sampleShadingEnable = VK_TRUE,
         .minSampleShading = 0.2f,
     };
+    
+#if MSAA
     ms.rasterizationSamples = gpu->db.msaa_samples;
+#else
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+#endif
     
     local_persist VkPipelineDepthStencilStateCreateInfo ds = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
@@ -1443,8 +1493,14 @@ def_create_gpu(create_gpu)
             "VK_KHR_swapchain",
         };
         
+        VkPhysicalDeviceVulkan12Features feat12 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+            .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
+        };
+        
         VkPhysicalDeviceVulkan13Features feat13 = {
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+            .pNext = &feat12,
             .synchronization2 = VK_TRUE,
         };
         
@@ -1829,7 +1885,15 @@ def_gpu_db_flush(gpu_db_flush)
         vk_end_cmd(cmd[GPU_CI_T]);
     }
     
-    VkRect2D ra = {};
+    VkRect2D ra;
+    ra.offset.x = 0;
+    ra.offset.y = 0;
+    ra.extent.width = win->dim.w;
+    ra.extent.height = win->dim.h;
+    
+#if 0
+    // NOTE(SollyCB): I would like to do this, but it can leave artifacts if I do not clear the whole screen.
+    // Maybe there is a better way to account for this than clearing the entire screen?
     memset(&ra.offset, 0x7f, sizeof(ra.offset));
     memset(&ra.extent, 0x00, sizeof(ra.extent));
     for(u32 i=0; i < gpu->db.used; ++i) {
@@ -1853,6 +1917,11 @@ def_gpu_db_flush(gpu_db_flush)
     if (ra.offset.y > 0) ra.offset.y -= 1;
     if (ra.extent.width < win->dim.w) ra.extent.width += 2;
     if (ra.extent.height < win->dim.h) ra.extent.height += 2;
+    
+    if (ra.extent.width > win->dim.w) ra.extent.width = win->dim.w;
+    if (ra.extent.height > win->dim.h) ra.extent.height = win->dim.h;
+    
+#endif
     
     VkClearValue cv = {{{1.0f,1.0f,1.0f,1.0f}}};
     

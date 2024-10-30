@@ -8,9 +8,8 @@
 #include "vdt.h"
 #include "edm.h"
 
-#define FONT_URI "consolab.ttf"
-#define FONT_HEIGHT 13
-#define FONT_FIDELITY 400
+#define FONT_URI "fonts/liberation-mono.ttf"
+#define FONT_HEIGHT 15
 
 // alpha channel of bg holds char index
 #define FG_COL ((struct rgba) {.r = 0, .g = 0, .b = 0, .a = 255})

@@ -12,9 +12,10 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
     return (struct fgbg) {.fg = fg, .bg = bg};
 }
 
-#define CHAR_PAD_RIGHT 1
-#define CHAR_PAD_BOTTOM 1
+#define CHAR_PAD_RIGHT 0
+#define CHAR_PAD_BOTTOM 0
 
+// @Todo Maybe I want to tightly pack chars rather than having a consistent cell width? Idk what is most readable.
 static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, char c) {
     if (is_whitechar(c)) {
         return (struct rect_u16) {
@@ -26,7 +27,7 @@ static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, char c) {
     } else {
         u32 i = char_to_glyph(c);
         return (struct rect_u16) {
-            .ofs.x = (gpu->cell.dim_px.w + CHAR_PAD_RIGHT) * col,
+            .ofs.x = (gpu->cell.dim_px.w + CHAR_PAD_RIGHT) * col + gpu->glyph[i].x,
             .ofs.y = (gpu->cell.dim_px.h + CHAR_PAD_BOTTOM) * row + gpu->cell.dim_px.h - gpu->glyph[i].h + (gpu->glyph[i].h + gpu->glyph[i].y),
             .ext.w = gpu->glyph[i].w,
             .ext.h = gpu->glyph[i].h,
@@ -56,7 +57,8 @@ def_create_edm(create_edm)
 
 def_edm_update(edm_update)
 {
-    struct string str = STR("This is a string!");
+    struct string str = STR("Um, Hello World! This is a really long string to test whether the renderpass will have problems now because I think that it should not");
+    //struct string str = STR("the quick brown fox");
     
     u16 lc=0,cc=0;
     for(u32 i=0; i < str.size; ++i) {
@@ -71,7 +73,8 @@ def_edm_update(edm_update)
             cc += 1;
         }
         
-        gpu_db_add(r, col.fg, col.bg);
+        if (r.ofs.x + r.ext.w < win->dim.w && r.ofs.y + r.ext.h < win->dim.h)
+            gpu_db_add(r, col.fg, col.bg);
         
     }
     
