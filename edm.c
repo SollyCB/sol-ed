@@ -22,7 +22,7 @@ static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, struct offset
     r.ofs.y = view_ofs.y;
     if (is_whitechar(c)) {
         r.ofs.x += gpu->cell.dim_px.w * col;
-        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * row;
+        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + (s16)prg->font.bl;
         r.ext.w = gpu->cell.dim_px.w;
         r.ext.h = gpu->cell.dim_px.h;
         return r;
@@ -95,7 +95,7 @@ def_edm_update(edm_update)
     struct editor_file edf = {};
     edf.flags = EDF_SHWN;
     edf.view_pos = 0;
-    edf.cursor_pos = 0;
+    edf.cursor_pos = 50;
     
     u16 x = 100;
     u16 y = 50;
@@ -113,6 +113,19 @@ def_edm_update(edm_update)
         struct fgbg col = edm_char_col(edf.fb.data[i]);
         struct rect_u16 r = edm_make_char_rect(cc, lc, edf.view.ofs, edf.fb.data[i]);
         
+        if (i == edf.cursor_pos) {
+            struct rect_u16 c = edm_make_char_rect(cc, lc, edf.view.ofs, ' ');
+            gpu_db_add(c, CSR_FG, CSR_BG);
+            col.fg = CSR_FG;
+            col.bg = CSR_BG;
+        }
+        
+        if (r.ofs.x + r.ext.w < edf.view.ext.w &&
+            r.ofs.y + r.ext.h < edf.view.ext.h)
+        {
+            gpu_db_add(r, col.fg, col.bg);
+        }
+        
         if (edf.fb.data[i] == '\n') {
             lc += 1;
             cc = 0;
@@ -120,16 +133,6 @@ def_edm_update(edm_update)
             cc += 1;
         }
         
-        if (r.ofs.x + r.ext.w < edf.view.ext.w &&
-            r.ofs.y + r.ext.h < edf.view.ext.h)
-        {
-            if (i == edf.cursor_pos) {
-                gpu_db_add(r, CSR_FG, CSR_BG);
-                gpu_db_add(r, CSR_FG, CSR_BG);
-            } else {
-                gpu_db_add(r, col.fg, col.bg);
-            }
-        }
         
     }
     return 0;

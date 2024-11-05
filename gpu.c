@@ -424,6 +424,7 @@ internal int gpu_create_mem(void)
         cmd[GPU_CI_G] = gpu_cmd(GPU_CI_G).bufs[ci];
     }
     
+    prg->font.bl = Max_s32;
     u32 max_w = 0;
     u32 max_h = 0;
     u32 img_sz = 0;
@@ -443,6 +444,9 @@ internal int gpu_create_mem(void)
         
         VkMemoryRequirements mr[CHT_SZ];
         
+        u32 max_u = 0;
+        s32 max_d = Max_s32;
+        
         for(u32 i=0; i < cl_array_size(bm); ++i) {
             int x,y;
             bm[i] = stbtt_GetCodepointBitmap(&font, 0, stbtt_ScaleForPixelHeight(&font, FONT_HEIGHT),
@@ -455,8 +459,9 @@ internal int gpu_create_mem(void)
             
             bm_sz[i] = bm_dim[i].w * bm_dim[i].h;
             bm_tot += (u32)gpu_buf_align(bm_sz[i]);
-            if (max_w < bm_dim[i].w) max_w = bm_dim[i].w;
-            if (max_h < bm_dim[i].h) max_h = bm_dim[i].h;
+            if (max_w < bm_dim[i].w + x) max_w = bm_dim[i].w + x;
+            if (max_u > bm_dim[i].h) max_u = bm_dim[i].h;
+            if (max_d > y) max_d = y;
             
             ici.extent = (VkExtent3D) {.width = bm_dim[i].w, .height = bm_dim[i].h, .depth = 1};
             
@@ -474,6 +479,9 @@ internal int gpu_create_mem(void)
             vk_get_img_memreq(g[i].img, &mr[i]);
             img_sz = (u32)(align(img_sz, mr[i].alignment) + mr[i].size);
         }
+        
+        max_h = max_u + abs(max_d);
+        prg->font.bl = max_d;
         
         VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         ai.allocationSize = img_sz;

@@ -27,8 +27,8 @@ internal int win_kb_add(struct keyboard_input ki)
 
 def_create_win(create_win)
 {
-    win->dim.w = 1920;
-    win->dim.h = 1080;
+    win->dim.w = INIT_WIN_W;
+    win->dim.h = INIT_WIN_H;
     win->rdim.w = 1.0f / win->dim.w;
     win->rdim.h = 1.0f / win->dim.h;
     win->handle = SDL_CreateWindow("Window Title",

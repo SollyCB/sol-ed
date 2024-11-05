@@ -8,15 +8,25 @@
 #include "vdt.h"
 #include "edm.h"
 
-#define FONT_URI "fonts/liberation-mono.ttf"
-#define FONT_HEIGHT 10
+#define FONT_URI "fonts/liberation-mono.bold.ttf"
+#define FONT_HEIGHT 12
+
+#define FG_RED 0
+#define FG_GRN 0
+#define FG_BLU 0
+#define BG_RED 255
+#define BG_GRN 255
+#define BG_BLU 255
 
 // alpha channel of bg holds char index
-#define FG_COL ((struct rgba) {.r = 0, .g = 0, .b = 0, .a = 255})
-#define BG_COL ((struct rgba) {.r = 255, .g = 255, .b = 255, .a = 0})
+#define FG_COL ((struct rgba) {.r = FG_RED, .g = FG_GRN, .b = FG_BLU, .a = 255})
+#define BG_COL ((struct rgba) {.r = BG_RED, .g = BG_GRN, .b = BG_BLU, .a = 0})
 
-#define CSR_FG BG_COL
-#define CSR_BG FG_COL
+#define CSR_FG ((struct rgba) {.r = BG_RED, .g = BG_GRN, .b = BG_BLU, .a = 0})
+#define CSR_BG ((struct rgba) {.r = FG_RED, .g = FG_GRN, .b = FG_BLU, .a = 0})
+
+#define INIT_WIN_W 640
+#define INIT_WIN_H 480
 
 #define TOTAL_MEM mb(32)
 #define MAX_THREADS 1 /* 1 == only main thread */
@@ -82,6 +92,10 @@ struct program {
         u32 avg; // 1ms
         u32 worst; // 7-10ms
     } frames;
+    
+    struct {
+        s32 bl; // pixels to baseline
+    } font;
 };
 
 #ifdef LIB
