@@ -580,7 +580,7 @@ internal int gpu_create_mem(void)
         }
     }
     
-    u64 db_mem_sz = gpu_dba_sz(cell_cnt) + large_set_buffer_size(cell_cnt);
+    u64 db_mem_sz = gpu_dba_sz(cell_cnt);
     void *db = palloc(MT, db_mem_sz);
     if (!db) {
         log_error("Failed to allocate memory for draw info array (%u bytes)", db_mem_sz);
@@ -738,7 +738,6 @@ internal int gpu_create_mem(void)
         pfree(MT, gpu->db.di);
     gpu->db.di = db;
     gpu->db.used = 0;
-    create_large_set(cell_cnt, (u64*)((u8*)db + gpu_dba_sz(cell_cnt)), NULL, &gpu->db.occupado);
     
     for(u32 i=0; i < GPU_MEM_CNT; ++i) {
         if (i == GPU_MI_R) continue; // do not free msaa image memory (it never needs to resize)
@@ -1767,19 +1766,6 @@ def_gpu_db_add(gpu_db_add)
     gpu->db.di[gpu->db.used].bg = bg;
     gpu->db.di[gpu->db.used].fg = fg;
     gpu->db.used += 1;
-    
-    // makes the following calculations generally more concise
-    rect.ext.w += rect.ofs.x;
-    rect.ext.h += rect.ofs.y;
-    struct rect_u16 cr = gpu_px_to_cell_rect(rect);
-    
-    for(u32 x = (u32)cr.ofs.x + (u32)cr.ofs.y * gpu->cell.win_dim_cells.w;
-        x < (u32)cr.ext.w + (u32)(cr.ext.h-1) * gpu->cell.win_dim_cells.w;
-        x += gpu->cell.win_dim_cells.w)
-    {
-        for(u32 i = x; i < x + (cr.ext.w - cr.ofs.x); ++i)
-            large_set_add(gpu->db.occupado, i);
-    }
     
     return 0;
 }

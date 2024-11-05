@@ -4,15 +4,18 @@
 #include "../solh/sol.h"
 
 enum edf_flags {
-    EDF_SHOWN = 0x01,
+    EDF_SHWN = 0x01,
+    EDF_TSHW = 0x02,
+    EDF_THDE = 0x04,
+    EDF_WRAP = 0x08,
 };
 
 struct editor_file {
     u32 flags;
-    u32 cursor_pos; // char that the cursor is on
-    u32 view_pos; // char that is the top left corner of the view
+    u32 view_pos; // subtract from cursor_pos to get the char that is the top left corner of the view
+    u64 cursor_pos; // char that the cursor is on
     struct rect_u16 view; // pixel region on screen that the view is rendered to
-    struct string data;
+    struct string fb; // file buffer
     struct string uri;
 };
 def_typed_array(edf, struct editor_file)

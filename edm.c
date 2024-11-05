@@ -16,18 +16,20 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
 
 // @Todo Maybe I want to tightly pack chars rather than having a
 // consistent cell width? Idk what is most readable.
-static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, char c) {
+static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, struct offset_u16 view_ofs, char c) {
     struct rect_u16 r = {};
+    r.ofs.x = view_ofs.x;
+    r.ofs.y = view_ofs.y;
     if (is_whitechar(c)) {
-        r.ofs.x = gpu->cell.dim_px.w * col;
-        r.ofs.y = (gpu->cell.dim_px.h + EDM_ROW_PAD) * row;
+        r.ofs.x += gpu->cell.dim_px.w * col;
+        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * row;
         r.ext.w = gpu->cell.dim_px.w;
         r.ext.h = gpu->cell.dim_px.h;
         return r;
     } else {
         u32 i = char_to_glyph(c);
-        r.ofs.x = gpu->cell.dim_px.w * col + gpu->glyph[i].x;
-        r.ofs.y = (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
+        r.ofs.x += gpu->cell.dim_px.w * col + gpu->glyph[i].x;
+        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
         r.ext.w = gpu->glyph[i].w;
         r.ext.h = gpu->glyph[i].h;
         return r;
@@ -88,23 +90,46 @@ Line 4: Now these lines will repeat, take a look!\n\
 
 def_edm_update(edm_update)
 {
-    struct string str = CLSTR(edm_test_string);
+    struct string data = CLSTR(edm_test_string);
+    
+    struct editor_file edf = {};
+    edf.flags = EDF_SHWN;
+    edf.view_pos = 0;
+    edf.cursor_pos = 0;
+    
+    u16 x = 100;
+    u16 y = 50;
+    edf.view.ofs.x = x;
+    edf.view.ofs.y = y;
+    edf.view.ext.w = win->dim.w - x;
+    edf.view.ext.h = win->dim.h - y;
+    
+    edf.fb = data;
+    edf.uri = (struct string) {};
     
     u16 lc=0,cc=0;
-    for(u32 i=0; i < str.size; ++i) {
+    for(u32 i=0; i < edf.fb.size; ++i) {
         
-        struct fgbg col = edm_char_col(str.data[i]);
-        struct rect_u16 r = edm_make_char_rect(cc, lc, str.data[i]);
+        struct fgbg col = edm_char_col(edf.fb.data[i]);
+        struct rect_u16 r = edm_make_char_rect(cc, lc, edf.view.ofs, edf.fb.data[i]);
         
-        if (str.data[i] == '\n') {
+        if (edf.fb.data[i] == '\n') {
             lc += 1;
             cc = 0;
         } else {
             cc += 1;
         }
         
-        if (r.ofs.x + r.ext.w < win->dim.w && r.ofs.y + r.ext.h < win->dim.h)
-            gpu_db_add(r, col.fg, col.bg);
+        if (r.ofs.x + r.ext.w < edf.view.ext.w &&
+            r.ofs.y + r.ext.h < edf.view.ext.h)
+        {
+            if (i == edf.cursor_pos) {
+                gpu_db_add(r, CSR_FG, CSR_BG);
+                gpu_db_add(r, CSR_FG, CSR_BG);
+            } else {
+                gpu_db_add(r, col.fg, col.bg);
+            }
+        }
         
     }
     return 0;

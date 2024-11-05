@@ -135,7 +135,6 @@ struct gpu {
         VkFence fence[FRAME_WRAP];
         VkImage img[FRAME_WRAP]; // msaa render target
         VkImageView view[FRAME_WRAP];
-        large_set_t occupado;
         struct draw_info {
             struct rect_u16 pd;
             struct rgba fg,bg;
