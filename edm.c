@@ -13,37 +13,33 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
 }
 
 #define EDM_ROW_PAD 0 /* padding between rows in pixels */
+#define EDM_CSR_PAD 1 /* increase cursor size in y*/
 
-// @Todo Maybe I want to tightly pack chars rather than having a
-// consistent cell width? Idk what is most readable.
 static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, struct offset_u16 view_ofs, char c) {
+    log_error_if(is_whitechar(c), "This function should not be called with whitespace.");
+    u32 i = char_to_glyph(c);
     struct rect_u16 r = {};
-    r.ofs.x = view_ofs.x;
-    r.ofs.y = view_ofs.y;
-    if (is_whitechar(c)) {
-        r.ofs.x += gpu->cell.dim_px.w * col;
-        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + (s16)gpu->cell.y_ofs;
-        r.ext.w = gpu->cell.dim_px.w;
-        r.ext.h = gpu->cell.dim_px.h;
-        return r;
-    } else {
-        u32 i = char_to_glyph(c);
-        r.ofs.x += gpu->cell.dim_px.w * col + gpu->glyph[i].x;
-        r.ofs.y += (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
-        r.ext.w = gpu->glyph[i].w;
-        r.ext.h = gpu->glyph[i].h;
-        return r;
-    }
+    r.ofs.x = view_ofs.x + gpu->cell.dim_px.w * col + gpu->glyph[i].x;
+    r.ofs.y = view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
+    r.ext.w = gpu->glyph[i].w;
+    r.ext.h = gpu->glyph[i].h;
+    return r;
+}
+
+static inline struct rect_u16 edm_make_cursor_rect(u16 col, u16 row, struct offset_u16 view_ofs) {
+    struct rect_u16 r = {};
+    r.ofs.x = view_ofs.x + gpu->cell.dim_px.w * col;
+    r.ofs.y = view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + (s16)gpu->cell.y_ofs - EDM_CSR_PAD;
+    r.ext.w = gpu->cell.dim_px.w;
+    r.ext.h = gpu->cell.dim_px.h + EDM_CSR_PAD;
+    return r;
 }
 
 static inline struct fgbg edm_char_col(char c)
 {
+    log_error_if(is_whitechar(c), "This function should not be called with whitespace.");
     struct fgbg r = edm_make_fgbg(FG_COL, BG_COL);
-    if (is_whitechar(c)) {
-        r.fg.a = 0;
-    } else {
-        r.bg.a = char_to_glyph(c);
-    }
+    r.bg.a = char_to_glyph(c);
     return r;
 }
 
@@ -95,8 +91,8 @@ def_edm_update(edm_update)
     struct editor_file edf = {};
     edf.flags = EDF_SHWN;
     edf.view_pos = 0;
-    // edf.cursor_pos = 58;
-    edf.cursor_pos = 0;
+    edf.cursor_pos = 57;
+    //edf.cursor_pos = 19;
     
     u16 x = 100;
     u16 y = 50;
@@ -111,29 +107,38 @@ def_edm_update(edm_update)
     u16 lc=0,cc=0;
     for(u32 i=0; i < edf.fb.size; ++i) {
         
+        if (is_whitechar(edf.fb.data[i])) {
+            if (edf.fb.data[i] == '\n') {
+                lc += 1;
+                cc = 0;
+            } else {
+                cc += 1;
+            }
+            continue;
+        }
+        
         struct fgbg col = edm_char_col(edf.fb.data[i]);
         struct rect_u16 r = edm_make_char_rect(cc, lc, edf.view.ofs, edf.fb.data[i]);
         
         if (i == edf.cursor_pos) {
-            struct rect_u16 c = edm_make_char_rect(cc, lc, edf.view.ofs, ' ');
-            gpu_db_add(c, CSR_FG, CSR_BG);
-            col.fg = CSR_FG;
-            col.bg = CSR_BG;
+            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf.view.ofs);
+            struct rgba fg={},bg={};
+            
+            rgb_copy(&fg, &CSR_FG);
+            rgb_copy(&bg, &CSR_BG);
+            gpu_db_add(c, fg, bg);
+            
+            rgb_copy(&col.fg, &CSR_FG);
+            rgb_copy(&col.bg, &CSR_BG);
         }
-        else if (r.ofs.x + r.ext.w < edf.view.ext.w &&
-                 r.ofs.y + r.ext.h < edf.view.ext.h)
+        
+        if (r.ofs.x + r.ext.w < edf.view.ext.w &&
+            r.ofs.y + r.ext.h < edf.view.ext.h)
         {
             gpu_db_add(r, col.fg, col.bg);
         }
         
-        if (edf.fb.data[i] == '\n') {
-            lc += 1;
-            cc = 0;
-        } else {
-            cc += 1;
-        }
-        
-        
+        cc += 1;
     }
     return 0;
 }
