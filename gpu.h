@@ -101,6 +101,7 @@ struct gpu {
         struct extent_u16 win_dim_cells; // window dimensions in cells
         struct extent_f32 rdim_px; // reciprocals
         struct extent_f32 rwin_dim_cells;
+        s32 y_ofs; // default cell px shift
         u32 cnt;
     } cell;
     

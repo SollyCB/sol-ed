@@ -92,10 +92,6 @@ struct program {
         u32 avg; // 1ms
         u32 worst; // 7-10ms
     } frames;
-    
-    struct {
-        s32 bl; // pixels to baseline
-    } font;
 };
 
 #ifdef LIB
