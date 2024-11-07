@@ -53,7 +53,22 @@ def_create_edm(create_edm)
 }
 
 char edm_test_string[] = "\
-gLine 1: This is a line of text\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
+Line 2: This is another line, but it has more letters\n\
+Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
+Line 4: Now these lines will repeat, take a look!\n\
+\n\
+Line 1: This is a line of text\n\
 Line 2: This is another line, but it has more letters\n\
 Line 3: This line has the line above appended to it in order to test long strings: This is another line, but it has more letters\n\
 Line 4: Now these lines will repeat, take a look!\n\
@@ -89,7 +104,7 @@ def_edm_update(edm_update)
     struct string data = CLSTR(edm_test_string);
     
     struct editor_file edf = {};
-    edf.flags = EDF_SHWN;
+    edf.flags = EDF_SHWN|EDF_WRAP;
     edf.view_pos = 0;
     edf.cursor_pos = 57;
     //edf.cursor_pos = 19;
@@ -106,7 +121,6 @@ def_edm_update(edm_update)
     
     u16 lc=0,cc=0;
     for(u32 i=0; i < edf.fb.size; ++i) {
-        
         if (is_whitechar(edf.fb.data[i])) {
             if (edf.fb.data[i] == '\n') {
                 lc += 1;
@@ -115,6 +129,19 @@ def_edm_update(edm_update)
                 cc += 1;
             }
             continue;
+        }
+        
+        if (edf.view.ext.h < edf.view.ofs.y + gpu->cell.dim_px.h * lc + 1)
+            break;
+        
+        if (edf.view.ext.w < edf.view.ofs.x + gpu->cell.dim_px.w * cc) {
+            lc += 1;
+            cc = 0;
+            if ((edf.flags & EDF_WRAP) == false) {
+                while(i < edf.fb.size && edf.fb.data[i] != '\n')
+                    i += 1;
+                continue;
+            }
         }
         
         struct fgbg col = edm_char_col(edf.fb.data[i]);
@@ -132,12 +159,7 @@ def_edm_update(edm_update)
             rgb_copy(&col.bg, &CSR_BG);
         }
         
-        if (r.ofs.x + r.ext.w < edf.view.ext.w &&
-            r.ofs.y + r.ext.h < edf.view.ext.h)
-        {
-            gpu_db_add(r, col.fg, col.bg);
-        }
-        
+        gpu_db_add(r, col.fg, col.bg);
         cc += 1;
     }
     return 0;
