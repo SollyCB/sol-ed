@@ -3,6 +3,10 @@
 
 struct edm *edm;
 
+struct edf_line_stat {
+    u32 i,row,col;
+};
+
 struct fgbg {
     struct rgba fg;
     struct rgba bg;
@@ -22,24 +26,44 @@ static inline bool edf_will_wrap_h(struct editor_file *edf, u32 lc)
     return edf->view.ext.h < edf->view.ofs.y + gpu->cell.dim_px.h * lc;
 }
 
+internal void edf_newline(struct edf_line_stat *els)
+{
+    els->i += 1;
+    els->row += 1;
+    els->col = 0;
+}
+
+internal void edf_newcol(struct edf_line_stat *els)
+{
+    els->i += 1;
+    els->col += 1;
+}
+
+
+internal void edf_virtual_newline(struct edf_line_stat *els)
+{
+    els->row += 1;
+    els->col = 0;
+}
+
 #define EDM_ROW_PAD 0 /* padding between rows in pixels */
 #define EDM_CSR_PAD 1 /* increase cursor size in y*/
 
-static inline struct rect_u16 edm_make_char_rect(u16 col, u16 row, struct offset_u16 view_ofs, char c) {
+static inline struct rect_u16 edm_make_char_rect(struct edf_line_stat els, struct offset_u16 view_ofs, char c) {
     log_error_if(is_whitechar(c), "This function should not be called with whitespace.");
     u32 i = char_to_glyph(c);
     struct rect_u16 r = {};
-    r.ofs.x = view_ofs.x + gpu->cell.dim_px.w * col + gpu->glyph[i].x;
-    r.ofs.y = view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + gpu->glyph[i].y;
+    r.ofs.x = (u16)(view_ofs.x + gpu->cell.dim_px.w * els.col + gpu->glyph[i].x);
+    r.ofs.y = (u16)(view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (els.row+1) + gpu->glyph[i].y);
     r.ext.w = gpu->glyph[i].w;
     r.ext.h = gpu->glyph[i].h;
     return r;
 }
 
-static inline struct rect_u16 edm_make_cursor_rect(u16 col, u16 row, struct offset_u16 view_ofs) {
+static inline struct rect_u16 edm_make_cursor_rect(struct edf_line_stat els, struct offset_u16 view_ofs) {
     struct rect_u16 r = {};
-    r.ofs.x = view_ofs.x + gpu->cell.dim_px.w * col;
-    r.ofs.y = view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (row+1) + (s16)gpu->cell.y_ofs - EDM_CSR_PAD;
+    r.ofs.x = (u16)(view_ofs.x + gpu->cell.dim_px.w * els.col);
+    r.ofs.y = (u16)(view_ofs.y + (gpu->cell.dim_px.h + EDM_ROW_PAD) * (els.row+1) + (s16)gpu->cell.y_ofs - EDM_CSR_PAD);
     r.ext.w = gpu->cell.dim_px.w;
     r.ext.h = gpu->cell.dim_px.h + EDM_CSR_PAD;
     return r;
@@ -115,10 +139,11 @@ internal void edf_draw_file(struct editor_file *edf)
     charset_add(&wsnl, ' ');
     charset_add(&wsnl, '\n');
     
-    u16 lc=0,cc=0;
-    for(u64 i=0; i < edf->fb.size; ++i) {
-        if (i == edf->cursor_pos) {
-            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf->view.ofs);
+    struct edf_line_stat els = {};
+    
+    for(els.i = edf->view_pos; els.i < edf->fb.size; edf_newcol(&els)) {
+        if (els.i == edf->cursor_pos) {
+            struct rect_u16 c = edm_make_cursor_rect(els, edf->view.ofs);
             struct rgba fg={},bg={};
             
             rgb_copy(&fg, &CSR_FG);
@@ -126,52 +151,48 @@ internal void edf_draw_file(struct editor_file *edf)
             gpu_db_add(c, fg, bg);
         }
         
-        if (is_whitechar(edf->fb.data[i])) {
+        if (is_whitechar(edf->fb.data[els.i])) {
             do {
-                while(i < edf->fb.size && edf->fb.data[i] == '\n') {
-                    i += 1;
-                    lc += 1;
-                    cc = 0;
+                while(els.i < edf->fb.size && edf->fb.data[els.i] == '\n')
+                    edf_newline(&els);
+                while(edf->fb.data[els.i] == ' ') {
+                    if (edf_will_wrap_w(edf, els.col))
+                        edf_newline(&els);
+                    else
+                        edf_newcol(&els);
                 }
-                while(edf->fb.data[i] == ' ') {
-                    i += 1;
-                    cc += 1;
-                    if (edf_will_wrap_w(edf, cc)) {
-                        lc += 1;
-                        cc = 0;
-                    }
-                }
-            } while(is_whitechar(edf->fb.data[i]));
+            } while(is_whitechar(edf->fb.data[els.i]));
             
-            u32 l = strfindcharset(create_string(edf->fb.data + i, edf->fb.size - i), wsnl);
-            if (edf_will_wrap_w(edf, cc + l)) {
-                lc += 1;
-                cc = 0;
+            if (edf->flags & EDF_WRAP) {
+                u32 l = strfindcharset(create_string(edf->fb.data + els.i, edf->fb.size - els.i), wsnl);
+                if (edf_will_wrap_w(edf, els.col + l))
+                    edf_virtual_newline(&els);
             }
         }
         
-        if (edf_will_wrap_w(edf, cc)) {
+        if (edf_will_wrap_w(edf, els.col)) {
             if (edf->flags & EDF_WRAP) {
-                lc += 1;
-                cc = 0;
+                edf_virtual_newline(&els);
             } else {
-                i += strfindchar(create_string(edf->fb.data + i, edf->fb.size - i), '\n');
+                u32 inc = strfindchar(create_string(edf->fb.data + els.i, edf->fb.size - els.i), '\n');
+                if (inc == Max_u32)
+                    break;
+                els.i += inc-1;
                 continue;
             }
         }
-        if (edf_will_wrap_h(edf, lc))
+        if (edf_will_wrap_h(edf, els.row))
             break;
         
-        struct fgbg col = edm_char_col(edf->fb.data[i]);
-        struct rect_u16 r = edm_make_char_rect(cc, lc, edf->view.ofs, edf->fb.data[i]);
+        struct fgbg col = edm_char_col(edf->fb.data[els.i]);
+        struct rect_u16 r = edm_make_char_rect(els, edf->view.ofs, edf->fb.data[els.i]);
         
-        if (i == edf->cursor_pos) {
+        if (els.i == edf->cursor_pos) {
             rgb_copy(&col.fg, &CSR_FG);
             rgb_copy(&col.bg, &CSR_BG);
         }
         
         gpu_db_add(r, col.fg, col.bg);
-        cc += 1;
     }
 }
 
