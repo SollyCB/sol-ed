@@ -12,6 +12,16 @@ static inline struct fgbg edm_make_fgbg(struct rgba fg, struct rgba bg) {
     return (struct fgbg) {.fg = fg, .bg = bg};
 }
 
+static inline bool edf_will_wrap_w(struct editor_file *edf, u32 cc)
+{
+    return edf->view.ext.w < edf->view.ofs.x + gpu->cell.dim_px.w * cc;
+}
+
+static inline bool edf_will_wrap_h(struct editor_file *edf, u32 lc)
+{
+    return edf->view.ext.h < edf->view.ofs.y + gpu->cell.dim_px.h * lc;
+}
+
 #define EDM_ROW_PAD 0 /* padding between rows in pixels */
 #define EDM_CSR_PAD 1 /* increase cursor size in y*/
 
@@ -99,6 +109,59 @@ Line 3: This line has the line above appended to it in order to test long string
 Line 4: Now these lines will repeat, take a look!\n\
 ";
 
+internal void edf_draw_file(struct editor_file *edf)
+{
+    charset_t cs = create_charset();
+    charset_add(&cs, ' ');
+    charset_add(&cs, '\n');
+    
+    u16 lc=0,cc=0;
+    for(u32 i=0; i < edf->fb.size; ++i) {
+        if (is_whitechar(edf->fb.data[i])) {
+            if (edf->fb.data[i] == '\n') {
+                lc += 1;
+                cc = 0;
+            } else {
+                if (edf->flags & EDF_WRAP) {
+                    u32 l = strfindcharset(create_string(edf->fb.data + i + 1, edf->fb.size - i - 1), cs);
+                    if (edf_will_wrap_w(edf, cc + l)) {
+                        lc += 1;
+                        cc = 0;
+                        continue;
+                    }
+                }
+                cc += 1;
+            }
+            continue;
+        }
+        
+        if (edf_will_wrap_w(edf, cc)) {
+            i += strfindchar(create_string(edf->fb.data + i, edf->fb.size - i), '\n');
+            continue;
+        }
+        if (edf_will_wrap_h(edf, lc))
+            break;
+        
+        struct fgbg col = edm_char_col(edf->fb.data[i]);
+        struct rect_u16 r = edm_make_char_rect(cc, lc, edf->view.ofs, edf->fb.data[i]);
+        
+        if (i == edf->cursor_pos) {
+            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf->view.ofs);
+            struct rgba fg={},bg={};
+            
+            rgb_copy(&fg, &CSR_FG);
+            rgb_copy(&bg, &CSR_BG);
+            gpu_db_add(c, fg, bg);
+            
+            rgb_copy(&col.fg, &CSR_FG);
+            rgb_copy(&col.bg, &CSR_BG);
+        }
+        
+        gpu_db_add(r, col.fg, col.bg);
+        cc += 1;
+    }
+}
+
 def_edm_update(edm_update)
 {
     struct string data = CLSTR(edm_test_string);
@@ -119,48 +182,7 @@ def_edm_update(edm_update)
     edf.fb = data;
     edf.uri = (struct string) {};
     
-    u16 lc=0,cc=0;
-    for(u32 i=0; i < edf.fb.size; ++i) {
-        if (is_whitechar(edf.fb.data[i])) {
-            if (edf.fb.data[i] == '\n') {
-                lc += 1;
-                cc = 0;
-            } else {
-                cc += 1;
-            }
-            continue;
-        }
-        
-        if (edf.view.ext.h < edf.view.ofs.y + gpu->cell.dim_px.h * lc + 1)
-            break;
-        
-        if (edf.view.ext.w < edf.view.ofs.x + gpu->cell.dim_px.w * cc) {
-            lc += 1;
-            cc = 0;
-            if ((edf.flags & EDF_WRAP) == false) {
-                while(i < edf.fb.size && edf.fb.data[i] != '\n')
-                    i += 1;
-                continue;
-            }
-        }
-        
-        struct fgbg col = edm_char_col(edf.fb.data[i]);
-        struct rect_u16 r = edm_make_char_rect(cc, lc, edf.view.ofs, edf.fb.data[i]);
-        
-        if (i == edf.cursor_pos) {
-            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf.view.ofs);
-            struct rgba fg={},bg={};
-            
-            rgb_copy(&fg, &CSR_FG);
-            rgb_copy(&bg, &CSR_BG);
-            gpu_db_add(c, fg, bg);
-            
-            rgb_copy(&col.fg, &CSR_FG);
-            rgb_copy(&col.bg, &CSR_BG);
-        }
-        
-        gpu_db_add(r, col.fg, col.bg);
-        cc += 1;
-    }
+    edf_draw_file(&edf);
+    
     return 0;
 }
