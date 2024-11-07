@@ -12,9 +12,9 @@ enum edf_flags {
 
 struct editor_file {
     u32 flags;
-    u32 view_pos; // subtract from cursor_pos to get the char that is the top left corner of the view
-    u64 cursor_pos; // char that the cursor is on
+    struct offset_u16 view_pos; // distance in cells to cursor from the top left corner of the view
     struct rect_u16 view; // pixel region on screen that the view is rendered to
+    u64 cursor_pos; // char that the cursor is on
     struct string fb; // file buffer
     struct string uri;
 };

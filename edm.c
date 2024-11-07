@@ -4,7 +4,8 @@
 struct edm *edm;
 
 struct edf_line_stat {
-    u32 i,row,col;
+    u64 i;
+    u16 ofs,row,col;
 };
 
 struct fgbg {
@@ -26,9 +27,27 @@ static inline bool edf_will_wrap_h(struct editor_file *edf, u32 lc)
     return edf->view.ext.h < edf->view.ofs.y + gpu->cell.dim_px.h * lc;
 }
 
+static inline int edf_next_line(struct editor_file *edf, struct edf_line_stat *els)
+{
+    u32 inc = strfindchar(create_string(edf->fb.data + els->i, edf->fb.size - els->i), '\n');
+    if (inc == Max_u32)
+        return -1;
+    els->i += inc;
+    return 0;
+}
+
+static inline u32 edf_word_len(struct editor_file *edf, struct edf_line_stat els)
+{
+    charset_t wsnl = create_charset();
+    charset_add(&wsnl, ' ');
+    charset_add(&wsnl, '\n');
+    u32 l = strfindcharset(create_string(edf->fb.data + els.i, edf->fb.size - els.i), wsnl);
+    return l == Max_u32 ? (u32)(edf->fb.size - els.i) : l;
+}
+
 internal void edf_newline(struct edf_line_stat *els)
 {
-    els->i += 1;
+    els->i += 1 + els->ofs;
     els->row += 1;
     els->col = 0;
 }
@@ -75,6 +94,23 @@ static inline struct fgbg edm_char_col(char c)
     struct fgbg r = edm_make_fgbg(FG_COL, BG_COL);
     r.bg.a = char_to_glyph(c);
     return r;
+}
+
+static inline void edf_draw_cursor(struct editor_file *edf, struct edf_line_stat els)
+{
+    struct rect_u16 c = edm_make_cursor_rect(els, edf->view.ofs);
+    struct rgba fg={},bg={};
+    
+    rgb_copy(&fg, &CSR_FG);
+    rgb_copy(&bg, &CSR_BG);
+    gpu_db_add(c, fg, bg);
+}
+
+static inline void edf_maybe_draw_cursor(struct editor_file *edf, struct edf_line_stat els)
+{
+    if (els.i != edf->cursor_pos)
+        return;
+    edf_draw_cursor(edf, els);
 }
 
 def_create_edm(create_edm)
@@ -135,36 +171,59 @@ Line 4: Now these lines will repeat, take a look!\n\
 
 internal void edf_draw_file(struct editor_file *edf)
 {
-    charset_t wsnl = create_charset();
-    charset_add(&wsnl, ' ');
-    charset_add(&wsnl, '\n');
-    
     struct edf_line_stat els = {};
     
-    for(els.i = edf->view_pos; els.i < edf->fb.size; edf_newcol(&els)) {
-        if (els.i == edf->cursor_pos) {
-            struct rect_u16 c = edm_make_cursor_rect(els, edf->view.ofs);
-            struct rgba fg={},bg={};
-            
-            rgb_copy(&fg, &CSR_FG);
-            rgb_copy(&bg, &CSR_BG);
-            gpu_db_add(c, fg, bg);
+    u64 view_pos = 0;
+    {
+        u16 i;
+        for(i = edf->view_pos.x; i < edf->cursor_pos; ++i) {
+            if (edf->fb.data[edf->cursor_pos - i] == '\n') {
+                i -= 1;
+                break;
+            }
         }
+        els.ofs = i - edf->view_pos.x;
+        view_pos += els.ofs;
+    }
+    
+    for(els.i = view_pos; els.i < edf->fb.size; edf_newcol(&els)) {
+        main_loop_start: // goto label
         
         if (is_whitechar(edf->fb.data[els.i])) {
             do {
-                while(els.i < edf->fb.size && edf->fb.data[els.i] == '\n')
-                    edf_newline(&els);
+                u16 cnt = 0;
+                
+                // newline
+                while(els.i < edf->fb.size && edf->fb.data[els.i] == '\n') {
+                    els.i += 1;
+                    cnt += 1;
+                    edf_maybe_draw_cursor(edf, els);
+                }
+                if (cnt) {
+                    els.row += cnt;
+                    els.i += els.ofs;
+                    els.col = 0;
+                }
+                
+                // space
                 while(edf->fb.data[els.i] == ' ') {
-                    if (edf_will_wrap_w(edf, els.col))
-                        edf_newline(&els);
-                    else
+                    if (edf_will_wrap_w(edf, els.col)) {
+                        if (edf->flags & EDF_WRAP) {
+                            edf_virtual_newline(&els);
+                        } else {
+                            if (edf_next_line(edf, &els))
+                                goto main_loop_end;
+                            goto main_loop_start;
+                        }
+                    } else {
                         edf_newcol(&els);
+                        edf_maybe_draw_cursor(edf, els);
+                    }
                 }
             } while(is_whitechar(edf->fb.data[els.i]));
             
             if (edf->flags & EDF_WRAP) {
-                u32 l = strfindcharset(create_string(edf->fb.data + els.i, edf->fb.size - els.i), wsnl);
+                u32 l = edf_word_len(edf, els);
                 if (edf_will_wrap_w(edf, els.col + l))
                     edf_virtual_newline(&els);
             }
@@ -174,11 +233,9 @@ internal void edf_draw_file(struct editor_file *edf)
             if (edf->flags & EDF_WRAP) {
                 edf_virtual_newline(&els);
             } else {
-                u32 inc = strfindchar(create_string(edf->fb.data + els.i, edf->fb.size - els.i), '\n');
-                if (inc == Max_u32)
-                    break;
-                els.i += inc-1;
-                continue;
+                if (edf_next_line(edf, &els))
+                    goto main_loop_end;
+                goto main_loop_start;
             }
         }
         if (edf_will_wrap_h(edf, els.row))
@@ -188,12 +245,15 @@ internal void edf_draw_file(struct editor_file *edf)
         struct rect_u16 r = edm_make_char_rect(els, edf->view.ofs, edf->fb.data[els.i]);
         
         if (els.i == edf->cursor_pos) {
+            edf_draw_cursor(edf, els);
             rgb_copy(&col.fg, &CSR_FG);
             rgb_copy(&col.bg, &CSR_BG);
         }
         
         gpu_db_add(r, col.fg, col.bg);
     }
+    main_loop_end: // goto label
+    return;
 }
 
 def_edm_update(edm_update)
@@ -202,9 +262,7 @@ def_edm_update(edm_update)
     
     struct editor_file edf = {};
     edf.flags = EDF_SHWN|EDF_WRAP;
-    edf.view_pos = 0;
     edf.cursor_pos = 57;
-    //edf.cursor_pos = 19;
     
     u16 x = 100;
     u16 y = 50;
@@ -215,6 +273,16 @@ def_edm_update(edm_update)
     
     edf.fb = data;
     edf.uri = (struct string) {};
+    
+    u16 i;
+    for(i=0; i < edf.cursor_pos; ++i) {
+        if (edf.fb.data[edf.cursor_pos - i] == '\n') {
+            i -= 1;
+            break;
+        }
+    }
+    edf.view_pos.x = i;
+    edf.view_pos.y = 0;
     
     edf_draw_file(&edf);
     
