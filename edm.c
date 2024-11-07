@@ -111,33 +111,53 @@ Line 4: Now these lines will repeat, take a look!\n\
 
 internal void edf_draw_file(struct editor_file *edf)
 {
-    charset_t cs = create_charset();
-    charset_add(&cs, ' ');
-    charset_add(&cs, '\n');
+    charset_t wsnl = create_charset();
+    charset_add(&wsnl, ' ');
+    charset_add(&wsnl, '\n');
     
     u16 lc=0,cc=0;
-    for(u32 i=0; i < edf->fb.size; ++i) {
+    for(u64 i=0; i < edf->fb.size; ++i) {
+        if (i == edf->cursor_pos) {
+            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf->view.ofs);
+            struct rgba fg={},bg={};
+            
+            rgb_copy(&fg, &CSR_FG);
+            rgb_copy(&bg, &CSR_BG);
+            gpu_db_add(c, fg, bg);
+        }
+        
         if (is_whitechar(edf->fb.data[i])) {
-            if (edf->fb.data[i] == '\n') {
-                lc += 1;
-                cc = 0;
-            } else {
-                if (edf->flags & EDF_WRAP) {
-                    u32 l = strfindcharset(create_string(edf->fb.data + i + 1, edf->fb.size - i - 1), cs);
-                    if (edf_will_wrap_w(edf, cc + l)) {
+            do {
+                while(i < edf->fb.size && edf->fb.data[i] == '\n') {
+                    i += 1;
+                    lc += 1;
+                    cc = 0;
+                }
+                while(edf->fb.data[i] == ' ') {
+                    i += 1;
+                    cc += 1;
+                    if (edf_will_wrap_w(edf, cc)) {
                         lc += 1;
                         cc = 0;
-                        continue;
                     }
                 }
-                cc += 1;
+            } while(is_whitechar(edf->fb.data[i]));
+            
+            u32 l = strfindcharset(create_string(edf->fb.data + i, edf->fb.size - i), wsnl);
+            if (edf_will_wrap_w(edf, cc + l)) {
+                lc += 1;
+                cc = 0;
             }
-            continue;
         }
         
         if (edf_will_wrap_w(edf, cc)) {
-            i += strfindchar(create_string(edf->fb.data + i, edf->fb.size - i), '\n');
-            continue;
+            if (edf->flags & EDF_WRAP) {
+                lc += 1;
+                cc = 0;
+            } else {
+                i += strfindchar(create_string(edf->fb.data + i, edf->fb.size - i), '\n');
+                continue;
+            }
         }
         if (edf_will_wrap_h(edf, lc))
             break;
@@ -146,13 +166,6 @@ internal void edf_draw_file(struct editor_file *edf)
         struct rect_u16 r = edm_make_char_rect(cc, lc, edf->view.ofs, edf->fb.data[i]);
         
         if (i == edf->cursor_pos) {
-            struct rect_u16 c = edm_make_cursor_rect(cc, lc, edf->view.ofs);
-            struct rgba fg={},bg={};
-            
-            rgb_copy(&fg, &CSR_FG);
-            rgb_copy(&bg, &CSR_BG);
-            gpu_db_add(c, fg, bg);
-            
             rgb_copy(&col.fg, &CSR_FG);
             rgb_copy(&col.bg, &CSR_BG);
         }
