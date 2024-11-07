@@ -191,13 +191,12 @@ internal void edf_draw_file(struct editor_file *edf)
         
         if (is_whitechar(edf->fb.data[els.i])) {
             do {
-                u16 cnt = 0;
-                
                 // newline
+                u16 cnt = 0;
                 while(els.i < edf->fb.size && edf->fb.data[els.i] == '\n') {
+                    edf_maybe_draw_cursor(edf, els);
                     els.i += 1;
                     cnt += 1;
-                    edf_maybe_draw_cursor(edf, els);
                 }
                 if (cnt) {
                     els.row += cnt;
@@ -216,8 +215,8 @@ internal void edf_draw_file(struct editor_file *edf)
                             goto main_loop_start;
                         }
                     } else {
-                        edf_newcol(&els);
                         edf_maybe_draw_cursor(edf, els);
+                        edf_newcol(&els);
                     }
                 }
             } while(is_whitechar(edf->fb.data[els.i]));
@@ -281,7 +280,7 @@ def_edm_update(edm_update)
             break;
         }
     }
-    edf.view_pos.x = i;
+    edf.view_pos.x = i - 4;
     edf.view_pos.y = 0;
     
     edf_draw_file(&edf);
